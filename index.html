@@ -731,7 +731,7 @@ async function loadGoalProgress(g) {
 
 // ── GOAL DETAIL ──────────────────────────────────────────
 async function openGoal(id) {
-  currentGoal = goals.find(g => g.id === id);
+  currentGoal = goals.find(g => String(g.id) === String(id));
   if (!currentGoal) return;
   goToMenu('detail');
   document.getElementById('detail-icon').textContent = currentGoal.icon;
@@ -782,7 +782,7 @@ function updateDetailProgress() {
 async function toggleTask(id, done) {
   try {
     await api(`/api/tasks/${id}`, 'PATCH', { done });
-    const t = currentTasks.find(x => x.id === id);
+    const t = currentTasks.find(x => String(x.id) === String(id));
     if (t) t.done = done;
     renderDetailTasks();
     loadSidebarTasks();
@@ -794,7 +794,7 @@ async function toggleTask(id, done) {
 async function deleteTask(id) {
   try {
     await api(`/api/tasks/${id}`, 'DELETE');
-    currentTasks = currentTasks.filter(t => t.id !== id);
+    currentTasks = currentTasks.filter(t => String(t.id) !== String(id));
     renderDetailTasks();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -863,7 +863,7 @@ function renderDetailRoadmap() {
 async function toggleRoadStep(id, done) {
   try {
     await api(`/api/roadmap/${id}`, 'PATCH', { done });
-    const s = currentRoadmap.find(x => x.id === id);
+    const s = currentRoadmap.find(x => String(x.id) === String(id));
     if (s) s.done = done;
     renderDetailRoadmap();
   } catch {}
@@ -956,7 +956,7 @@ function openGoalModal(id = null) {
   editingGoalId = id;
   document.getElementById('goal-modal-title').textContent = id ? 'Maqsadni tahrirlash' : 'Yangi maqsad';
   if (id) {
-    const g = goals.find(x => x.id === id);
+    const g = goals.find(x => String(x.id) === String(id));
     document.getElementById('gm-name').value = g.name;
     document.getElementById('gm-desc').value = g.description;
     selEmoji = g.icon; selColor = g.color;
@@ -1006,7 +1006,7 @@ async function deleteGoal(id) {
   if (!confirm("Bu maqsadni o'chirasizmi?")) return;
   try {
     await api(`/api/goals/${id}`, 'DELETE');
-    goals = goals.filter(g => g.id !== id);
+    goals = goals.filter(g => String(g.id) !== String(id));
     updateSidebarSelect();
     updateHubStats();
     renderGoalsGrid();
