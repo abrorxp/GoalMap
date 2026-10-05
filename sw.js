@@ -1,4 +1,4 @@
-const CACHE = 'goalmap-v3';
+const CACHE = 'goalmap-v4';
 const STATIC = ['/'];
 
 self.addEventListener('install', e => {
@@ -16,6 +16,7 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
 
   // API so'rovlarini cache qilmaymiz — faqat network
@@ -31,17 +32,14 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // HTML, CSS, JS — cache-first, so'ng network
+  // HTML, CSS, JS — network-first (har doim yangisi), offline bo'lsa cache
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      const fresh = fetch(e.request).then(res => {
-        if (res.ok) {
-          const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
-        }
-        return res;
-      }).catch(() => cached);
-      return cached || fresh;
-    })
+    fetch(e.request).then(res => {
+      if (res.ok) {
+        const clone = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+      }
+      return res;
+    }).catch(() => caches.match(e.request))
   );
 });
