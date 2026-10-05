@@ -55,6 +55,8 @@ async function setupMongoose() {
     text:       { type: String, default: '' },
     day_label:  { type: String, default: '' },
     done:       { type: Boolean, default: false },
+    done_at:    { type: Date, default: null },
+    due:        { type: String, default: '' },
     created_at: { type: Date, default: Date.now },
   });
   const RoadmapStepSchema = new mongoose.Schema({
@@ -145,7 +147,7 @@ async function generateAi(type, goal, desc) {
 app.use(cors({ origin: true, methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));
 app.options('*', cors());
 app.use(express.json());
-app.use(express.static(PUBLIC_DIR));
+['index.html', 'sw.js', 'manifest.json'].forEach(f => app.get('/' + f, (_, r) => r.sendFile(path.join(PUBLIC_DIR, f))));
 
 function auth(req, res, next) {
   const h = req.headers.authorization;
@@ -290,7 +292,7 @@ app.post('/api/goals/:id/tasks', auth, async (req, res) => {
       const goal  = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
       if (!goal) return res.status(404).json({ error: 'Topilmadi' });
       const items   = Array.isArray(req.body.tasks) ? req.body.tasks : [req.body];
-      const docs    = items.map(t => ({ goal_id: goal._id, user_id: req.user.id, text: t.text || '', day_label: t.day_label || t.day || '', done: false }));
+      const docs    = items.map(t => ({ goal_id: goal._id, user_id: req.user.id, text: t.text || '', day_label: t.day_label || t.day || '', due: t.due || '', done: false }));
       const created = await Task.insertMany(docs);
       return res.json(created.map(toObj));
     }
@@ -300,7 +302,7 @@ app.post('/api/goals/:id/tasks', auth, async (req, res) => {
     if (!g) return res.status(404).json({ error: 'Topilmadi' });
     const items   = Array.isArray(req.body.tasks) ? req.body.tasks : [req.body];
     const created = items.map(t => {
-      const task = { id: nextId(db.tasks), goal_id: gid, user_id: req.user.id, text: t.text || '', day_label: t.day_label || t.day || '', done: false, created_at: new Date().toISOString() };
+      const task = { id: nextId(db.tasks), goal_id: gid, user_id: req.user.id, text: t.text || '', day_label: t.day_label || t.day || '', due: t.due || '', done: false, created_at: new Date().toISOString() };
       db.tasks.push(task); return task;
     });
     writeDB(db); res.json(created);
@@ -309,22 +311,31 @@ app.post('/api/goals/:id/tasks', auth, async (req, res) => {
 
 app.patch('/api/tasks/:id', auth, async (req, res) => {
   try {
-    const doneVal = req.body.done === true || req.body.done === 'true';
+    const b = req.body, set = {};
+    if (b.done !== undefined) { set.done = b.done === true || b.done === 'true' || b.done === 1; set.done_at = set.done ? new Date().toISOString() : null; }
+    if (typeof b.text === 'string' && b.text.trim()) set.text = b.text.trim().slice(0, 500);
+    if (typeof b.due === 'string') set.due = b.due.slice(0, 10);
     if (useMongoose) {
-      const task = await Task.findOneAndUpdate(
-        { _id: req.params.id, user_id: req.user.id },
-        { $set: { done: doneVal } },
-        { new: true }
-      );
-      if (!task) return res.status(404).json({ error: 'Topilmadi' });
+      const t = await Task.findOneAndUpdate({ _id: req.params.id, user_id: req.user.id }, { $set: set });
+      if (!t) return res.status(404).json({ error: 'Topilmadi' });
       return res.json({ ok: true });
     }
-    const db  = readDB();
-    const tid = Number(req.params.id);
-    const t   = db.tasks.find(x => x.id === tid && x.user_id === req.user.id);
+    const db = readDB(), t = db.tasks.find(x => x.id === Number(req.params.id) && x.user_id === req.user.id);
     if (!t) return res.status(404).json({ error: 'Topilmadi' });
-    t.done = doneVal;
-    writeDB(db); res.json({ ok: true });
+    Object.assign(t, set); writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/stats', auth, async (req, res) => {
+  try {
+    const all = useMongoose ? (await Task.find({ user_id: req.user.id })).map(toObj) : readDB().tasks.filter(t => t.user_id === req.user.id);
+    const days = {}, key = d => d.toISOString().slice(0, 10);
+    all.forEach(t => { if (t.done && t.done_at) { const k = key(new Date(t.done_at)); days[k] = (days[k] || 0) + 1; } });
+    let streak = 0; const d = new Date();
+    if (!days[key(d)]) d.setDate(d.getDate() - 1);
+    while (days[key(d)]) { streak++; d.setDate(d.getDate() - 1); }
+    const week = [...Array(7)].map((_, i) => { const x = new Date(); x.setDate(x.getDate() - 6 + i); return { date: key(x), n: days[key(x)] || 0 }; });
+    res.json({ streak, week });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
