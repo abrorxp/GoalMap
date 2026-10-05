@@ -1,1105 +1,481 @@
-<!DOCTYPE html>
-<html lang="uz">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#0ea5e9">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="GoalMap">
-<meta name="description" content="Maqsadlaringizni kuzatib boring">
-<link rel="manifest" href="/manifest.json">
-<title>GoalMap</title>
-<style>
-:root{
-  --bg:#0a0f1e;--bg2:#0d1426;--bg3:#111827;
-  --card:#131d30;--card2:#1a2540;
-  --border:#1e2d4a;--border2:#243358;
-  --sky:#38bdf8;--sky2:#0ea5e9;--sky3:#0284c7;
-  --sky-glow:rgba(56,189,248,0.15);--sky-dim:rgba(56,189,248,0.08);
-  --text:#e2e8f0;--text2:#94a3b8;--text3:#475569;
-  --green:#34d399;--red:#f87171;--amber:#fbbf24;
-  --radius:12px;--radius-sm:8px;
-  --font:'Segoe UI',system-ui,sans-serif;
-  --topbar:52px;--bottom-nav:60px;
-  --safe-top:env(safe-area-inset-top,0px);
-  --safe-bottom:env(safe-area-inset-bottom,0px);
+require('dotenv').config();
+const express = require('express');
+const jwt     = require('jsonwebtoken');
+const bcrypt  = require('bcryptjs');
+const path    = require('path');
+const cors    = require('cors');
+const fs      = require('fs');
+
+const app        = express();
+const JWT_SECRET = process.env.JWT_SECRET || 'goalapp_secret_2025';
+const DB_PATH    = path.resolve(__dirname, process.env.DB_PATH || 'data.json');
+const PUBLIC_DIR = path.resolve(__dirname);
+const MONGODB_URI = process.env.MONGODB_URI || '';
+
+// ── DB ADAPTER ───────────────────────────────────────────
+let useMongoose = false;
+let User, Goal, Task, RoadmapStep;
+
+// ---- JSON fallback ----
+function readDB() {
+  try {
+    const raw = fs.readFileSync(DB_PATH, 'utf8');
+    const db  = JSON.parse(raw);
+    if (!db.users)         db.users         = [];
+    if (!db.goals)         db.goals         = [];
+    if (!db.tasks)         db.tasks         = [];
+    if (!db.roadmap_steps) db.roadmap_steps = [];
+    return db;
+  } catch { return { users: [], goals: [], tasks: [], roadmap_steps: [] }; }
 }
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html{height:100%}
-body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100%;overflow-x:hidden}
-button{cursor:pointer;font-family:inherit}
-input,textarea,select{font-family:inherit}
-::-webkit-scrollbar{width:3px}
-::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+function writeDB(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8'); }
+function nextId(arr) { return arr.length ? Math.max(...arr.map(x => Number(x.id) || 0)) + 1 : 1; }
 
-/* ── OFFLINE BANNER ── */
-#offline-banner{
-  display:none;position:fixed;top:0;left:0;right:0;z-index:999;
-  background:#7c3aed;color:#fff;text-align:center;font-size:12px;padding:6px;
-  padding-top:calc(6px + var(--safe-top));
-}
-#offline-banner.show{display:block}
+// ---- Mongoose setup ----
+async function setupMongoose() {
+  const mongoose = require('mongoose');
 
-/* ── AUTH ── */
-#auth-screen{
-  min-height:100vh;display:flex;align-items:center;justify-content:center;
-  background:radial-gradient(ellipse at 60% 30%,rgba(56,189,248,0.06) 0%,transparent 60%);
-  padding:1rem;
-}
-.auth-box{
-  background:var(--card);border:1px solid var(--border);border-radius:16px;
-  padding:2rem;width:100%;max-width:380px;
-}
-.auth-logo{text-align:center;margin-bottom:1.75rem}
-.auth-logo .logo-icon{font-size:2.5rem;margin-bottom:0.5rem}
-.auth-logo h1{font-size:1.5rem;font-weight:600;color:var(--sky);letter-spacing:-0.5px}
-.auth-logo p{font-size:13px;color:var(--text2);margin-top:4px}
-.auth-tabs{display:flex;gap:4px;background:var(--bg2);border-radius:var(--radius-sm);padding:4px;margin-bottom:1.25rem}
-.auth-tab{flex:1;padding:8px;border:none;background:none;color:var(--text2);font-size:13px;border-radius:6px;transition:all 0.2s}
-.auth-tab.active{background:var(--sky2);color:#fff;font-weight:500}
-.field{margin-bottom:12px}
-.field label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-weight:500}
-.field input{
-  width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);
-  padding:11px 14px;border-radius:var(--radius-sm);font-size:16px;outline:none;
-  transition:border 0.2s;-webkit-appearance:none;
-}
-.field input:focus{border-color:var(--sky)}
-.btn-primary{
-  width:100%;background:var(--sky2);border:none;color:#fff;padding:13px;
-  border-radius:var(--radius-sm);font-size:15px;font-weight:600;transition:background 0.2s;
-}
-.btn-primary:active{background:var(--sky3)}
-.auth-err{color:var(--red);font-size:12px;text-align:center;margin-top:10px;min-height:18px}
-
-/* ── APP ── */
-#app-screen{display:none;min-height:100vh;padding-bottom:calc(var(--bottom-nav) + var(--safe-bottom))}
-
-/* TOPBAR */
-.topbar{
-  height:var(--topbar);background:var(--bg2);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;justify-content:space-between;
-  padding:0 1rem;padding-top:var(--safe-top);
-  position:sticky;top:0;z-index:50;
-}
-.topbar-logo{font-size:15px;font-weight:700;color:var(--sky);letter-spacing:-0.3px}
-.breadcrumb{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);overflow:hidden}
-.breadcrumb span{color:var(--text3);flex-shrink:0}
-.crumb{color:var(--text2);cursor:pointer;transition:color 0.15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
-.crumb:hover,.crumb:active{color:var(--sky)}
-.crumb.active{color:var(--text)}
-.topbar-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
-.user-badge{display:flex;align-items:center;gap:6px;font-size:13px}
-.avatar{width:28px;height:28px;border-radius:50%;background:var(--sky2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
-.btn-logout{background:none;border:1px solid var(--border);color:var(--text2);padding:5px 10px;border-radius:var(--radius-sm);font-size:12px}
-
-/* BOTTOM NAV (mobile) */
-.bottom-nav{
-  display:none;position:fixed;bottom:0;left:0;right:0;z-index:50;
-  background:var(--bg2);border-top:1px solid var(--border);
-  padding-bottom:var(--safe-bottom);
-}
-.bottom-nav-inner{display:flex;height:var(--bottom-nav)}
-.bnav-btn{
-  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:3px;background:none;border:none;color:var(--text3);font-size:10px;
-  transition:color 0.15s;padding:0;
-}
-.bnav-btn .icon{font-size:20px;line-height:1}
-.bnav-btn.active{color:var(--sky)}
-
-/* ── MAIN (home) ── */
-#menu-main{display:none;padding:1rem;padding-bottom:1rem}
-
-/* Hub card */
-.hub-card{
-  background:var(--card);border:1px solid var(--border);border-radius:16px;
-  padding:1.5rem;display:flex;flex-direction:column;align-items:center;gap:1rem;
-  margin-bottom:1rem;cursor:pointer;transition:all 0.2s;position:relative;overflow:hidden;
-}
-.hub-card::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%,rgba(56,189,248,0.06),transparent 70%);pointer-events:none}
-.hub-card:active{transform:scale(0.98)}
-.hub-icon{font-size:3rem}
-.hub-label{font-size:16px;font-weight:700;color:var(--sky);letter-spacing:0.5px}
-.hub-sub{font-size:13px;color:var(--text2)}
-.hub-stats-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem}
-.hub-stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center}
-.hub-stat-num{font-size:1.5rem;font-weight:700;color:var(--sky)}
-.hub-stat-label{font-size:11px;color:var(--text2);margin-top:2px}
-
-/* Tasks panel (home page, below hub on mobile) */
-.home-tasks{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:1rem}
-.home-tasks-title{font-size:13px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px}
-.goal-selector{
-  width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);
-  padding:9px 10px;border-radius:var(--radius-sm);font-size:14px;outline:none;margin-bottom:10px;
-  -webkit-appearance:none;
-}
-.task-item-side{
-  display:flex;align-items:flex-start;gap:8px;padding:8px 10px;
-  border-radius:var(--radius-sm);margin-bottom:5px;border:1px solid transparent;
-  background:var(--bg2);transition:border 0.15s;
-}
-.task-cb{width:18px;height:18px;accent-color:var(--sky);flex-shrink:0;margin-top:1px;cursor:pointer}
-.task-content{flex:1;min-width:0}
-.task-text-s{font-size:13px;color:var(--text);line-height:1.4}
-.task-text-s.done{text-decoration:line-through;color:var(--text3)}
-.task-day-s{font-size:11px;color:var(--text3);margin-top:2px}
-.sidebar-empty{text-align:center;padding:1.5rem 1rem;color:var(--text3);font-size:13px}
-.stat-row{display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px;color:var(--text2)}
-.stat-bar{height:3px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:4px}
-.stat-fill{height:100%;background:var(--sky2);border-radius:2px;transition:width 0.4s}
-
-/* ── GOALS ── */
-#menu-goals{display:none;padding:1rem}
-.menu-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
-.menu-header h2{font-size:18px;font-weight:600}
-.btn-add{display:flex;align-items:center;gap:6px;background:var(--sky2);border:none;color:#fff;padding:9px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:600}
-.btn-add:active{background:var(--sky3)}
-.goals-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
-.goal-card{
-  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-  padding:1rem;cursor:pointer;transition:all 0.2s;position:relative;overflow:hidden;
-}
-.goal-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--card-accent,var(--sky2))}
-.goal-card:active{transform:scale(0.97)}
-.goal-card-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px}
-.goal-icon-wrap{width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:20px;background:var(--sky-dim)}
-.goal-card-menu{background:none;border:none;color:var(--text3);font-size:18px;padding:4px 6px;line-height:1;border-radius:6px}
-.goal-card-menu:active{color:var(--red)}
-.goal-card-name{font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px}
-.goal-card-desc{font-size:11px;color:var(--text2);line-height:1.5;margin-bottom:10px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.goal-progress-bar{height:3px;background:var(--border);border-radius:2px;overflow:hidden;margin-bottom:4px}
-.goal-progress-fill{height:100%;border-radius:2px;transition:width 0.4s}
-.goal-progress-label{display:flex;justify-content:space-between;font-size:10px;color:var(--text3)}
-
-/* ── DETAIL ── */
-#menu-detail{display:none;padding:1rem}
-.detail-main{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1rem}
-.detail-goal-header{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;padding-bottom:1rem;border-bottom:1px solid var(--border)}
-.detail-icon{width:46px;height:46px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:24px;background:var(--sky-dim);flex-shrink:0}
-.detail-name{font-size:17px;font-weight:700;color:var(--text)}
-.detail-desc{font-size:12px;color:var(--text2);margin-top:2px}
-.tabs-row{display:flex;gap:2px;margin-bottom:1rem;border-bottom:1px solid var(--border)}
-.tab{background:none;border:none;padding:8px 14px;font-size:13px;color:var(--text2);border-bottom:2px solid transparent;transition:all 0.15s;margin-bottom:-1px}
-.tab.active{color:var(--sky);border-bottom-color:var(--sky);font-weight:500}
-.tasks-section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.tasks-section-header h4{font-size:13px;font-weight:500;color:var(--text2)}
-.btn-ai{display:flex;align-items:center;gap:5px;background:var(--sky-dim);border:1px solid rgba(56,189,248,0.3);color:var(--sky);padding:6px 12px;border-radius:var(--radius-sm);font-size:12px;transition:all 0.2s}
-.btn-ai.loading{opacity:0.5;pointer-events:none}
-.task-item-d{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:6px;background:var(--bg2)}
-.task-text-d{flex:1;font-size:13px;color:var(--text);line-height:1.4}
-.task-text-d.done{text-decoration:line-through;color:var(--text3)}
-.task-day-d{font-size:11px;color:var(--text3);flex-shrink:0}
-.task-del{background:none;border:none;color:var(--text3);font-size:18px;padding:2px 6px;border-radius:6px}
-.task-del:active{color:var(--red)}
-.empty-state{text-align:center;padding:2rem;color:var(--text3);font-size:13px}
-.add-task-row{display:flex;gap:6px;margin-top:10px}
-.add-task-input{flex:1;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:var(--radius-sm);font-size:16px;outline:none;-webkit-appearance:none}
-.add-task-input:focus{border-color:var(--sky)}
-.btn-small{background:var(--sky2);border:none;color:#fff;padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;white-space:nowrap}
-
-/* Progress cards (below detail-main) */
-.detail-cards-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem}
-.detail-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1rem}
-.detail-card h4{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:8px}
-.progress-num{font-size:2rem;font-weight:700;color:var(--sky);line-height:1}
-.progress-sub{font-size:11px;color:var(--text2);margin-top:3px}
-.prog-bar-full{height:5px;background:var(--border);border-radius:3px;overflow:hidden;width:100%;margin-top:8px}
-.prog-bar-fill{height:100%;background:linear-gradient(90deg,var(--sky2),var(--sky));border-radius:3px;transition:width 0.5s}
-
-/* Roadmap */
-.roadmap-list{display:flex;flex-direction:column}
-.roadmap-step{display:flex;gap:12px;padding:4px 0}
-.step-track{display:flex;flex-direction:column;align-items:center}
-.step-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--sky2);background:var(--bg);flex-shrink:0;margin-top:2px;cursor:pointer;transition:all 0.2s}
-.step-dot.done{background:var(--sky2)}
-.step-connector{width:1px;flex:1;min-height:20px;background:var(--border);margin:3px 0}
-.step-body{flex:1;padding-bottom:12px}
-.step-title{font-size:13px;font-weight:500;color:var(--text)}
-.step-sub{font-size:11px;color:var(--text2);margin-top:2px;line-height:1.5}
-
-/* ── MODALS ── */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)}
-.modal-overlay.open{display:flex}
-.modal{
-  background:var(--card);border:1px solid var(--border2);
-  border-radius:20px 20px 0 0;
-  padding:1.5rem;width:100%;max-width:480px;
-  max-height:90vh;overflow-y:auto;
-  padding-bottom:calc(1.5rem + var(--safe-bottom));
-}
-.modal-handle{width:36px;height:4px;background:var(--border2);border-radius:2px;margin:0 auto 1rem}
-.modal h3{font-size:16px;font-weight:600;color:var(--text);margin-bottom:1.25rem}
-.modal .field input,.modal .field textarea{background:var(--bg2);-webkit-appearance:none}
-.modal .field textarea{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:var(--radius-sm);font-size:16px;outline:none;resize:none;height:80px}
-.modal .field textarea:focus{border-color:var(--sky)}
-.emoji-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:6px}
-.emoji-opt{font-size:22px;padding:8px;border-radius:8px;cursor:pointer;text-align:center;border:2px solid transparent;background:var(--bg2);transition:all 0.15s}
-.emoji-opt.sel{border-color:var(--sky);background:var(--sky-dim)}
-.color-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
-.color-opt{width:30px;height:30px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:transform 0.15s}
-.color-opt.sel{border-color:var(--text);transform:scale(1.15)}
-.modal-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem}
-.btn-cancel{background:none;border:1px solid var(--border);color:var(--text2);padding:10px 18px;border-radius:var(--radius-sm);font-size:14px}
-
-/* Toast */
-.toast{
-  position:fixed;bottom:calc(var(--bottom-nav) + var(--safe-bottom) + 12px);
-  left:50%;transform:translateX(-50%) translateY(100px);
-  background:var(--card2);border:1px solid var(--border2);color:var(--text);
-  padding:10px 20px;border-radius:24px;font-size:13px;z-index:999;
-  opacity:0;transition:all 0.3s;white-space:nowrap;
-}
-.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
-.toast.success{border-color:var(--green);color:var(--green)}
-.toast.error{border-color:var(--red);color:var(--red)}
-
-/* ── DESKTOP LAYOUT (768px+) ── */
-@media(min-width:768px){
-  #app-screen{padding-bottom:0}
-  .bottom-nav{display:none !important}
-  .topbar{padding:0 1.5rem}
-
-  /* Main: sidebar + hub side by side */
-  #menu-main{display:none;padding:0;flex-direction:row}
-  #menu-main.active{display:flex !important;min-height:calc(100vh - var(--topbar));align-items:stretch}
-  .mobile-only-content{display:none !important}
-  .desktop-sidebar{
-    display:flex !important;
-    width:300px;min-width:260px;border-right:1px solid var(--border);
-    background:var(--bg2);flex-direction:column;
-    height:calc(100vh - var(--topbar));position:sticky;top:var(--topbar);
-    flex-shrink:0;
-  }
-  .desktop-sidebar .sidebar-header{padding:1rem 1.25rem 0.75rem;border-bottom:1px solid var(--border)}
-  .desktop-sidebar .task-list-scroll{flex:1;overflow-y:auto;padding:0.75rem}
-  .desktop-sidebar .sidebar-stats{padding:0.75rem 1.25rem;border-top:1px solid var(--border)}
-  .main-hub-center{display:flex !important;flex:1;align-items:center;justify-content:center;flex-direction:column;gap:1.5rem;padding:2rem;min-height:calc(100vh - var(--topbar))}
-  .hub-circle{
-    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
-    width:180px;height:180px;background:var(--card);border:1px solid var(--border);
-    border-radius:50%;cursor:pointer;transition:all 0.25s;position:relative;
-  }
-  .hub-circle:hover{border-color:var(--sky);background:var(--card2);box-shadow:0 0 30px var(--sky-glow);transform:scale(1.04)}
-  .hub-ring{position:absolute;inset:-8px;border-radius:50%;border:1px dashed var(--border);animation:spin 20s linear infinite;pointer-events:none}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .hub-stats-desktop{display:flex;gap:16px}
-  .hub-stat-d{text-align:center}
-  .hub-stat-d .num{font-size:1.5rem;font-weight:700;color:var(--sky)}
-  .hub-stat-d .lbl{font-size:11px;color:var(--text2);margin-top:2px}
-
-  /* Mobile-only elements hidden on desktop */
-  .hub-card,.home-tasks,.hub-stats-row{display:none}
-  #menu-goals{padding:1.5rem}
-  .goals-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
-  #menu-detail{padding:1.5rem}
-  .detail-layout{display:grid;grid-template-columns:1fr 300px;gap:1.25rem}
-  .detail-cards-row{display:none}
-  .detail-sidebar-desktop{display:flex;flex-direction:column;gap:12px}
-  .modal-overlay{align-items:center}
-  .modal{border-radius:16px;max-width:420px;padding-bottom:1.5rem}
-  .modal-handle{display:none}
-  .toast{bottom:1.5rem}
-  .user-badge .name{display:inline}
-}
-
-/* Mobile: show bottom nav */
-@media(max-width:767px){
-  .bottom-nav{display:block}
-  .desktop-sidebar,.main-hub-center,.hub-stats-desktop,.detail-sidebar-desktop{display:none !important}
-  .mobile-only-content{display:block !important}
-  #menu-main.active{display:block !important;padding:1rem}
-  .detail-layout{display:block !important}
-  .detail-sidebar-desktop{display:none !important}
-  .user-badge .name{display:none}
-  /* Desktop-only elements hidden on mobile */
-  .hub-card-desktop,.hub-stats-row-desktop{display:none !important}
-}
-</style>
-</head>
-<body>
-
-<!-- Offline banner -->
-<div id="offline-banner">📵 Internet yo'q — offline rejim</div>
-
-<!-- AUTH -->
-<div id="auth-screen">
-  <div class="auth-box">
-    <div class="auth-logo">
-      <div class="logo-icon">🎯</div>
-      <h1>GoalMap</h1>
-      <p>Maqsadlaringizni kuzatib boring</p>
-    </div>
-    <div class="auth-tabs">
-      <button class="auth-tab active" onclick="setAuthTab('login')">Kirish</button>
-      <button class="auth-tab" onclick="setAuthTab('register')">Ro'yxatdan o'tish</button>
-    </div>
-    <div class="field"><label>Username</label><input id="auth-username" type="text" placeholder="username" autocomplete="username" inputmode="text"></div>
-    <div class="field"><label>Password</label><input id="auth-password" type="password" placeholder="••••••" autocomplete="current-password"></div>
-    <button class="btn-primary" id="auth-submit" onclick="submitAuth()">Kirish</button>
-    <div class="auth-err" id="auth-err"></div>
-  </div>
-</div>
-
-<!-- APP -->
-<div id="app-screen">
-  <!-- TOPBAR -->
-  <div class="topbar">
-    <div style="display:flex;align-items:center;gap:10px;overflow:hidden">
-      <span class="topbar-logo">🎯 GoalMap</span>
-      <div class="breadcrumb" id="breadcrumb">
-        <span class="crumb active" onclick="goToMenu('main')">Bosh sahifa</span>
-      </div>
-    </div>
-    <div class="topbar-right">
-      <div id="streak-badge" title="Ketma-ket kunlar" style="font-size:13px;color:var(--text2);display:flex;align-items:center;margin-right:10px"></div>
-      <button class="btn-logout" onclick="enableNotif()" title="Eslatmalar">🔔</button>
-      <button class="btn-logout" onclick="exportData()" title="Eksport">⬇</button>
-      <div class="user-badge">
-        <div class="avatar" id="user-avatar">?</div>
-        <span class="name" id="user-name-label" style="font-size:13px;color:var(--text2)">...</span>
-      </div>
-      <button class="btn-logout" onclick="logout()">Chiqish</button>
-    </div>
-  </div>
-
-  <!-- MAIN MENU -->
-  <div id="menu-main">
-    <!-- Desktop sidebar -->
-    <div class="desktop-sidebar" style="display:none">
-      <div class="sidebar-header">
-        <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Tasklar paneli</div>
-        <select class="goal-selector" id="sidebar-goal-select" onchange="loadSidebarTasks()">
-          <option value="">— Maqsad tanlang —</option>
-        </select>
-      </div>
-      <div class="task-list-scroll" id="sidebar-tasks-list">
-        <div class="sidebar-empty">Maqsad tanlang</div>
-      </div>
-      <div id="sidebar-stats" style="display:none;padding:0.75rem 1.25rem;border-top:1px solid var(--border);font-size:12px;color:var(--text2)">
-        <div class="stat-row"><span>Progress</span><span id="stat-pct">0%</span></div>
-        <div class="stat-bar"><div class="stat-fill" id="stat-fill" style="width:0%"></div></div>
-      </div>
-    </div>
-
-    <!-- Desktop hub center -->
-    <div class="main-hub-center" style="display:none">
-      <div class="hub-circle" onclick="goToMenu('goals')">
-        <div class="hub-ring"></div>
-        <div style="font-size:2.5rem">🗺️</div>
-        <div style="font-size:13px;font-weight:600;color:var(--sky)">MAQSADLAR</div>
-        <div style="font-size:11px;color:var(--text2)" id="hub-count-desktop">...</div>
-      </div>
-      <div class="hub-stats-desktop">
-        <div class="hub-stat-d"><div class="num" id="hstat-goals-d">0</div><div class="lbl">Maqsad</div></div>
-        <div class="hub-stat-d"><div class="num" id="hstat-tasks-d">0</div><div class="lbl">Task</div></div>
-        <div class="hub-stat-d"><div class="num" id="hstat-done-d">0</div><div class="lbl">Bajarildi</div></div>
-      </div>
-    </div>
-
-    <!-- Mobile layout: faqat stats + kunlik tasklar -->
-    <div style="width:100%" class="mobile-only-content">
-      <div class="hub-stats-row" style="cursor:pointer" onclick="goToMenu('goals')">
-        <div class="hub-stat"><div class="hub-stat-num" id="hstat-goals">0</div><div class="hub-stat-label">Maqsad</div></div>
-        <div class="hub-stat"><div class="hub-stat-num" id="hstat-tasks">0</div><div class="hub-stat-label">Task</div></div>
-        <div class="hub-stat"><div class="hub-stat-num" id="hstat-done">0</div><div class="hub-stat-label">Bajarildi</div></div>
-      </div>
-      <div class="home-tasks">
-        <div class="home-tasks-title">Kunlik tasklar</div>
-        <select class="goal-selector" id="mobile-goal-select" onchange="loadMobileTasks()">
-          <option value="">— Maqsad tanlang —</option>
-        </select>
-        <div id="mobile-tasks-list"><div class="sidebar-empty">Maqsad tanlang</div></div>
-        <div id="mobile-stats" style="display:none;margin-top:8px">
-          <div class="stat-row"><span>Progress</span><span id="mobile-stat-pct">0%</span></div>
-          <div class="stat-bar"><div class="stat-fill" id="mobile-stat-fill" style="width:0%"></div></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- GOALS MENU -->
-  <div id="menu-goals">
-    <div class="menu-header">
-      <h2>Maqsadlar</h2>
-      <button class="btn-add" onclick="openGoalModal()">+ Yangi</button>
-    </div>
-    <div class="goals-grid" id="goals-grid"></div>
-  </div>
-
-  <!-- DETAIL MENU -->
-  <div id="menu-detail">
-    <div class="detail-layout">
-      <!-- Main content -->
-      <div>
-        <div class="detail-main">
-          <div class="detail-goal-header">
-            <div class="detail-icon" id="detail-icon">🎯</div>
-            <div>
-              <div class="detail-name" id="detail-name"></div>
-              <div class="detail-desc" id="detail-desc"></div>
-            </div>
-          </div>
-          <div class="tabs-row">
-            <button class="tab active" onclick="switchDetailTab('tasks')">Kunlik Tasklar</button>
-            <button class="tab" onclick="switchDetailTab('roadmap')">Xarita</button>
-          </div>
-          <!-- Tasks Tab -->
-          <div id="detail-tasks-tab">
-            <div class="tasks-section-header">
-              <h4>Tasklar</h4>
-              <button class="btn-ai" id="ai-tasks-btn" onclick="aiGenTasks()">✦ AI bilan</button>
-            </div>
-            <div id="detail-tasks-list"></div>
-            <div class="add-task-row">
-              <input class="add-task-input" id="new-task-input" placeholder="Yangi task..." onkeydown="if(event.key==='Enter')addTaskManual()">
-              <input type="date" id="new-task-due" class="add-task-input" style="max-width:140px;flex:none" title="Muddat">
-              <button class="btn-small" onclick="addTaskManual()">+</button>
-            </div>
-          </div>
-          <!-- Roadmap Tab -->
-          <div id="detail-roadmap-tab" style="display:none">
-            <div class="tasks-section-header">
-              <h4>Yo'l xaritasi</h4>
-              <button class="btn-ai" id="ai-road-btn" onclick="aiGenRoadmap()">✦ AI bilan</button>
-            </div>
-            <div class="roadmap-list" id="detail-roadmap-list"></div>
-          </div>
-        </div>
-
-        <!-- Mobile progress cards -->
-        <div class="detail-cards-row">
-          <div class="detail-card">
-            <h4>Progress</h4>
-            <div class="progress-num" id="detail-pct-m">0%</div>
-            <div class="progress-sub" id="detail-task-count-m">0 / 0</div>
-            <div class="prog-bar-full"><div class="prog-bar-fill" id="detail-prog-fill-m" style="width:0%"></div></div>
-          </div>
-          <div class="detail-card">
-            <h4>Xarita</h4>
-            <div id="detail-road-progress-m" style="font-size:13px;color:var(--text2)">Xarita yo'q</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Desktop sidebar -->
-      <div class="detail-sidebar-desktop">
-        <div class="detail-card">
-          <h4>Progress</h4>
-          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
-            <div class="progress-num" id="detail-pct">0%</div>
-            <div class="progress-sub" id="detail-task-count">0 / 0 task</div>
-            <div class="prog-bar-full"><div class="prog-bar-fill" id="detail-prog-fill" style="width:0%"></div></div>
-          </div>
-        </div>
-        <div class="detail-card">
-          <h4>Xarita bosqichlari</h4>
-          <div id="detail-road-progress" style="font-size:13px;color:var(--text2)">Xarita yo'q</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Bottom Nav (mobile) -->
-  <nav class="bottom-nav">
-    <div class="bottom-nav-inner">
-      <button class="bnav-btn active" id="bnav-home" onclick="goToMenu('main')">
-        <span class="icon">🏠</span><span>Bosh</span>
-      </button>
-      <button class="bnav-btn" id="bnav-goals" onclick="goToMenu('goals')">
-        <span class="icon">🗺️</span><span>Maqsadlar</span>
-      </button>
-      <button class="bnav-btn" id="bnav-add" onclick="openGoalModal()">
-        <span class="icon">➕</span><span>Qo'shish</span>
-      </button>
-    </div>
-  </nav>
-</div>
-
-<!-- Goal Modal -->
-<div class="modal-overlay" id="goal-modal">
-  <div class="modal">
-    <div class="modal-handle"></div>
-    <h3 id="goal-modal-title">Yangi maqsad</h3>
-    <div class="field"><label>Nom</label><input type="text" id="gm-name" placeholder="Maqsad nomi"></div>
-    <div class="field"><label>Tavsif</label><textarea id="gm-desc" placeholder="Bu maqsadni nima uchun qo'ymoqdasiz?"></textarea></div>
-    <div class="field"><label>Emoji</label><div class="emoji-grid" id="gm-emoji-grid"></div></div>
-    <div class="field"><label>Rang</label><div class="color-row" id="gm-color-row"></div></div>
-    <div class="modal-btns">
-      <button class="btn-cancel" onclick="closeGoalModal()">Bekor</button>
-      <button class="btn-primary" style="width:auto;padding:10px 22px" onclick="saveGoal()">Saqlash</button>
-    </div>
-  </div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-// ── PWA & Offline ────────────────────────────────────────
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  const UserSchema = new mongoose.Schema({
+    username:   { type: String, required: true, unique: true },
+    password:   { type: String, required: true },
+    created_at: { type: Date, default: Date.now },
   });
+  const GoalSchema = new mongoose.Schema({
+    user_id:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    name:        { type: String, required: true },
+    description: { type: String, default: '' },
+    icon:        { type: String, default: '🎯' },
+    color:       { type: String, default: '#38bdf8' },
+    order_idx:   { type: Number, default: 0 },
+    created_at:  { type: Date, default: Date.now },
+  });
+  const TaskSchema = new mongoose.Schema({
+    goal_id:    { type: mongoose.Schema.Types.ObjectId, ref: 'Goal', required: true },
+    user_id:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    text:       { type: String, default: '' },
+    day_label:  { type: String, default: '' },
+    done:       { type: Boolean, default: false },
+    done_at:    { type: Date, default: null },
+    due:        { type: String, default: '' },
+    created_at: { type: Date, default: Date.now },
+  });
+  const RoadmapStepSchema = new mongoose.Schema({
+    goal_id:   { type: mongoose.Schema.Types.ObjectId, ref: 'Goal', required: true },
+    title:     { type: String, default: '' },
+    subtitle:  { type: String, default: '' },
+    done:      { type: Boolean, default: false },
+    order_idx: { type: Number, default: 0 },
+  });
+
+  User        = mongoose.model('User',        UserSchema);
+  Goal        = mongoose.model('Goal',        GoalSchema);
+  Task        = mongoose.model('Task',        TaskSchema);
+  RoadmapStep = mongoose.model('RoadmapStep', RoadmapStepSchema);
+
+  await mongoose.connect(MONGODB_URI);
+  console.log('✅ MongoDB connected');
+  useMongoose = true;
 }
-window.addEventListener('online', () => document.getElementById('offline-banner').classList.remove('show'));
-window.addEventListener('offline', () => document.getElementById('offline-banner').classList.add('show'));
-if (!navigator.onLine) document.getElementById('offline-banner').classList.add('show');
 
-// ── State ────────────────────────────────────────────────
-let API = '';
-const EMOJIS = ['🎯','📚','💪','🚀','💻','🎨','💰','🌍','🎵','📈','🏆','🧠','⚡','🔥','🌱','🎓','🏋️','✈️','🎮','🧘'];
-const COLORS = ['#38bdf8','#34d399','#a78bfa','#f472b6','#fb923c','#facc15','#60a5fa','#f87171'];
+// Convert MongoDB doc → plain object with .id string
+function toObj(doc) {
+  if (!doc) return null;
+  const o = doc.toObject ? doc.toObject() : { ...doc };
+  o.id = o._id.toString();
+  if (o.user_id) o.user_id = o.user_id.toString();
+  if (o.goal_id) o.goal_id = o.goal_id.toString();
+  delete o._id; delete o.__v;
+  return o;
+}
 
-let token = localStorage.getItem('gm_token');
-let currentUser = localStorage.getItem('gm_user');
-let goals = [], currentGoal = null, currentTasks = [], currentRoadmap = [];
-let selEmoji = '🎯', selColor = '#38bdf8', editingGoalId = null;
-let authMode = 'login', activeDetailTab = 'tasks';
-let totalTasks = 0, totalDone = 0;
+// ── AI CONFIG ────────────────────────────────────────────
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_MODEL   = process.env.OPENROUTER_MODEL   || 'openai/gpt-4o-mini';
+const OLLAMA_URL         = process.env.OLLAMA_URL         || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL       = process.env.OLLAMA_MODEL       || 'llama3.2:1b';
 
-// ── API ──────────────────────────────────────────────────
-async function resolveApiBase() {
-  if (API !== '') return API;
-  const origin = window.location.origin;
-  if (origin && origin !== 'null') {
-    try {
-      const r = await fetch(origin + '/api/health', { method: 'GET' });
-      if (r.ok) { API = ''; return API; }
-    } catch {}
+async function callOpenRouter(prompt) {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENROUTER_API_KEY}` },
+    body: JSON.stringify({ model: OPENROUTER_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: 2000 }),
+  });
+  if (!res.ok) { const t = await res.text().catch(() => ''); throw new Error(`OpenRouter error: ${res.status} ${t.slice(0, 200)}`); }
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content || '';
+}
+async function callOllama(prompt) {
+  const baseUrl = OLLAMA_URL.replace(/\/+$/g, '');
+  const res = await fetch(`${baseUrl}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: OLLAMA_MODEL, prompt, stream: false, options: { temperature: 0.7, num_predict: 600 } }),
+  });
+  if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
+  const data = await res.json();
+  return data?.response || '';
+}
+function buildAiPrompt(type, goal, desc) {
+  if (type === 'tasks')
+    return `Quyidagi maqsad uchun JSON formatda kunlik tasklar yarat:\nMaqsad: ${goal}\n${desc ? `Tavsif: ${desc}\n` : ''}Natija (faqat JSON massiv):\n[\n  { "text": "task matni", "day_label": "Kun 1" }\n]`;
+  return `Quyidagi maqsad uchun JSON formatda roadmap yarat:\nMaqsad: ${goal}\n${desc ? `Tavsif: ${desc}\n` : ''}Natija (faqat JSON massiv):\n[\n  { "title": "sarlavha", "subtitle": "tavsif" }\n]`;
+}
+function extractJson(text) {
+  const clean = text.replace(/```json|```/g, '').trim();
+  const m = clean.match(/\[[\s\S]*\]/);
+  if (!m) throw new Error("AI noto'g'ri JSON qaytardi");
+  return JSON.parse(m[0]);
+}
+function genLocalTasks(goal, desc) {
+  const verbs = ['Boshlash','Reja tuzish','Amaliyot','Tekshirish','Moslash','Yakunlash'];
+  return verbs.map((v, i) => ({ text: `${v}: ${goal}${desc ? ' - ' + desc : ''}`, day_label: `Kun ${i + 1}` }));
+}
+function genLocalRoadmap(goal, desc) {
+  const s = ['Maqsadni aniqlash','Resurslar','Boshlash','Nazorat','Moslashish','Baholash','Yakunlash'];
+  return s.map((t, i) => ({ title: `${i + 1}. ${t}`, subtitle: `${goal}${desc ? ' - ' + desc : ''}` }));
+}
+async function generateAi(type, goal, desc) {
+  const prompt = buildAiPrompt(type, goal, desc);
+  if (OPENROUTER_API_KEY) {
+    try { return extractJson(await callOpenRouter(prompt)); } catch (e) { console.warn('OpenRouter:', e.message); }
+  } else {
+    console.warn('OPENROUTER_API_KEY sozlanmagan!');
   }
-  return API;
-}
-
-async function api(path, method = 'GET', body = null) {
-  await resolveApiBase();
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
-  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
-  if (body) opts.body = JSON.stringify(body);
-  let r;
-  try {
-    r = await fetch((API || '') + path, opts);
-  } catch (netErr) {
-    throw new Error('Internet ulanish xatosi: ' + netErr.message);
+  // Ollama faqat lokal ishlaganda (Render'da yo'q)
+  if (!process.env.RENDER || process.env.OLLAMA_URL) {
+    try { return extractJson(await callOllama(prompt)); } catch (e) { console.warn('Ollama:', e.message); }
   }
-  const text = await r.text();
-  let d = {};
-  if (text) { try { d = JSON.parse(text); } catch { d = { error: text }; } }
-  if (!r.ok) throw new Error(d.error || d.message || 'Server xatosi ' + r.status);
-  return d;
+  // Shablon o'rniga aniq xato qaytaramiz
+  throw new Error("AI ishlamadi: OPENROUTER_API_KEY ni tekshiring");
 }
 
-function toast(msg, type = '') {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast show ' + type;
-  setTimeout(() => t.classList.remove('show'), 2800);
-}
+// ── MIDDLEWARE ───────────────────────────────────────────
+app.use(cors({ origin: true, methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));
+app.options('*', cors());
+app.use(express.json());
+['index.html', 'sw.js', 'manifest.json'].forEach(f => app.get('/' + f, (_, r) => r.sendFile(path.join(PUBLIC_DIR, f))));
 
-// ── EXTRAS ───────────────────────────────────────────────
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
-const dueStyle = t => (!t.done && t.due < today()) ? 'color:#f87171' : '';
-
-async function loadStats() {
-  try {
-    const s = await api('/api/stats'), mx = Math.max(1, ...s.week.map(w => w.n));
-    document.getElementById('streak-badge').innerHTML = '🔥 ' + s.streak +
-      '<span style="display:inline-flex;align-items:flex-end;gap:2px;height:14px;margin-left:6px">' +
-      s.week.map(w => `<i title="${w.date}: ${w.n}" style="width:4px;height:${3 + w.n / mx * 11}px;background:var(--sky);border-radius:1px"></i>`).join('') + '</span>';
-  } catch {}
-}
-
-async function editTask(id) {
-  const t = currentTasks.find(x => String(x.id) === String(id));
-  if (!t) return;
-  const text = prompt('Task matni:', t.text);
-  if (text === null) return;
-  const due = prompt("Muddat (YYYY-MM-DD), bo'sh = yo'q:", t.due || '');
-  if (due === null) return;
-  try {
-    await api(`/api/tasks/${id}`, 'PATCH', { text, due: due.trim() });
-    t.text = text.trim() || t.text; t.due = due.trim();
-    renderDetailTasks(); toast('Saqlandi ✓', 'success');
-  } catch (e) { toast('❌ ' + e.message, 'error'); }
-}
-
-async function checkDue() {
-  try {
-    const list = [];
-    for (const g of goals) (await api(`/api/goals/${g.id}/tasks`)).forEach(t => { if (!t.done && t.due && t.due <= today()) list.push(t); });
-    if (!list.length) return;
-    toast(`⏰ ${list.length} ta task muddati keldi`, 'error');
-    if ('Notification' in window && Notification.permission === 'granted')
-      navigator.serviceWorker?.ready.then(r => r.showNotification('GoalMap', { body: list.length + ' ta task: ' + list[0].text }));
-  } catch {}
-}
-async function enableNotif() {
-  if (!('Notification' in window)) return toast('Brauzer qo\'llamaydi', 'error');
-  const p = await Notification.requestPermission();
-  toast(p === 'granted' ? 'Eslatmalar yoqildi ✓' : 'Ruxsat berilmadi', p === 'granted' ? 'success' : 'error');
-  if (p === 'granted') checkDue();
-}
-
-async function exportData() {
-  const out = [];
-  for (const g of goals) out.push({ ...g, tasks: await api(`/api/goals/${g.id}/tasks`), roadmap: await api(`/api/goals/${g.id}/roadmap`) });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }));
-  a.download = 'goalmap-export.json'; a.click();
-}
-
-function confetti() {
-  const c = document.createElement('canvas');
-  c.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:999';
-  c.width = innerWidth; c.height = innerHeight; document.body.appendChild(c);
-  const x = c.getContext('2d'), f0 = 0;
-  const p = [...Array(120)].map(() => ({ x: Math.random() * c.width, y: -20, vx: Math.random() * 4 - 2, vy: Math.random() * 4 + 2, s: Math.random() * 6 + 4, c: COLORS[Math.random() * COLORS.length | 0] }));
-  let f = f0;
-  (function t() {
-    x.clearRect(0, 0, c.width, c.height);
-    p.forEach(q => { q.x += q.vx; q.y += q.vy; q.vy += .05; x.fillStyle = q.c; x.fillRect(q.x, q.y, q.s, q.s); });
-    if (++f < 150) requestAnimationFrame(t); else c.remove();
-  })();
+function auth(req, res, next) {
+  const h = req.headers.authorization;
+  if (!h) return res.status(401).json({ error: "Token yo'q" });
+  try { req.user = jwt.verify(h.replace('Bearer ', ''), JWT_SECRET); next(); }
+  catch { res.status(401).json({ error: "Token noto'g'ri" }); }
 }
 
 // ── AUTH ─────────────────────────────────────────────────
-function setAuthTab(mode) {
-  authMode = mode;
-  document.querySelectorAll('.auth-tab').forEach((b, i) =>
-    b.classList.toggle('active', [mode === 'login', mode === 'register'][i]));
-  document.getElementById('auth-submit').textContent = mode === 'login' ? 'Kirish' : "Ro'yxatdan o'tish";
-  document.getElementById('auth-err').textContent = '';
-}
-
-async function submitAuth() {
-  const username = document.getElementById('auth-username').value.trim();
-  const password = document.getElementById('auth-password').value.trim();
-  document.getElementById('auth-err').textContent = '';
-  if (!username || !password) { document.getElementById('auth-err').textContent = "To'ldiring"; return; }
+app.post('/api/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username va password kerak' });
+  if (username.length < 3)    return res.status(400).json({ error: 'Username kamida 3 harf' });
+  if (password.length < 6)    return res.status(400).json({ error: 'Password kamida 6 belgi' });
+  const key = username.toLowerCase();
   try {
-    const data = await api('/api/' + authMode, 'POST', { username, password });
-    token = data.token; currentUser = data.username;
-    localStorage.setItem('gm_token', token);
-    localStorage.setItem('gm_user', currentUser);
-    showApp();
-  } catch (e) { document.getElementById('auth-err').textContent = e.message; }
-}
-
-function logout() {
-  localStorage.removeItem('gm_token'); localStorage.removeItem('gm_user');
-  token = null; currentUser = null; goals = [];
-  document.getElementById('auth-screen').style.display = 'flex';
-  document.getElementById('app-screen').style.display = 'none';
-}
-
-// ── APP ──────────────────────────────────────────────────
-async function showApp() {
-  document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app-screen').style.display = 'block';
-  document.getElementById('user-name-label').textContent = currentUser;
-  document.getElementById('user-avatar').textContent = (currentUser || '?')[0].toUpperCase();
-  await loadGoals();
-  goToMenu('main');
-  loadStats(); checkDue();
-}
-
-async function loadGoals() {
-  try {
-    goals = await api('/api/goals');
-    updateHubStats();
-    updateSidebarSelect();
-  } catch (e) { if (e.message.includes('Invalid')) logout(); }
-}
-
-function updateHubStats() {
-  const n = goals.length;
-  document.getElementById('hstat-goals').textContent = n;
-  document.getElementById('hstat-goals-d').textContent = n;
-  document.getElementById('hub-count-desktop').textContent = n + ' ta maqsad';
-}
-
-function updateSidebarSelect() {
-  const opts = '<option value="">— Maqsad tanlang —</option>' +
-    goals.map(g => `<option value="${g.id}">${esc(g.icon)} ${esc(g.name)}</option>`).join('');
-  document.getElementById('sidebar-goal-select').innerHTML = opts;
-  document.getElementById('mobile-goal-select').innerHTML = opts;
-}
-
-function isMobile() { return window.innerWidth < 768; }
-
-function goToMenu(menu) {
-  ['main', 'goals', 'detail'].forEach(m => {
-    const el = document.getElementById('menu-' + m);
-    el.style.display = 'none';
-    el.classList.remove('active');
-  });
-  const el = document.getElementById('menu-' + menu);
-  if (menu === 'main') {
-    el.style.display = isMobile() ? 'block' : 'flex';
-  } else {
-    el.style.display = 'block';
-  }
-  el.classList.add('active');
-
-  // bottom nav active
-  document.querySelectorAll('.bnav-btn').forEach(b => b.classList.remove('active'));
-  if (menu === 'main') document.getElementById('bnav-home')?.classList.add('active');
-  if (menu === 'goals') document.getElementById('bnav-goals')?.classList.add('active');
-
-  // breadcrumb
-  const bc = document.getElementById('breadcrumb');
-  if (menu === 'main') bc.innerHTML = '<span class="crumb active">Bosh sahifa</span>';
-  else if (menu === 'goals') bc.innerHTML = '<span class="crumb" onclick="goToMenu(\'main\')">Bosh</span><span>›</span><span class="crumb active">Maqsadlar</span>';
-  else if (menu === 'detail') bc.innerHTML = `<span class="crumb" onclick="goToMenu('main')">Bosh</span><span>›</span><span class="crumb" onclick="goToMenu('goals')">Maqsadlar</span><span>›</span><span class="crumb active">${esc(currentGoal?.name)}</span>`;
-
-  if (menu === 'goals') renderGoalsGrid();
-  window.scrollTo(0, 0);
-}
-
-// ── GOALS GRID ───────────────────────────────────────────
-function renderGoalsGrid() {
-  totalTasks = 0; totalDone = 0;
-  const grid = document.getElementById('goals-grid');
-  if (!goals.length) {
-    grid.innerHTML = '<div style="color:var(--text3);font-size:14px;padding:2rem;grid-column:1/-1">Hali maqsad yo\'q. Birinchi maqsadingizni qo\'shing!</div>';
-    return;
-  }
-  grid.innerHTML = goals.map(g => `
-    <div class="goal-card" style="--card-accent:${g.color}" onclick="openGoal('${g.id}')">
-      <div class="goal-card-top">
-        <div class="goal-icon-wrap" style="background:${g.color}22">${esc(g.icon)}</div>
-        <button class="goal-card-menu" onclick="event.stopPropagation();deleteGoal('${g.id}')">×</button>
-      </div>
-      <div class="goal-card-name">${esc(g.name)}</div>
-      <div class="goal-card-desc">${esc(g.description)}</div>
-      <div class="goal-progress-bar"><div class="goal-progress-fill" style="background:${g.color};width:0%" id="gp-${g.id}"></div></div>
-      <div class="goal-progress-label"><span id="gc-${g.id}">...</span><span id="gpct-${g.id}"></span></div>
-    </div>
-  `).join('');
-  goals.forEach(g => loadGoalProgress(g));
-}
-
-async function loadGoalProgress(g) {
-  try {
-    const tasks = await api(`/api/goals/${g.id}/tasks`);
-    const done = tasks.filter(t => t.done).length;
-    const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
-    const fp = document.getElementById('gp-' + g.id);
-    if (fp) fp.style.width = pct + '%';
-    const fc = document.getElementById('gc-' + g.id);
-    if (fc) fc.textContent = done + '/' + tasks.length + ' task';
-    const fp2 = document.getElementById('gpct-' + g.id);
-    if (fp2) fp2.textContent = pct + '%';
-    totalTasks += tasks.length; totalDone += done;
-    document.getElementById('hstat-tasks').textContent = totalTasks;
-    document.getElementById('hstat-tasks-d').textContent = totalTasks;
-    document.getElementById('hstat-done').textContent = totalDone;
-    document.getElementById('hstat-done-d').textContent = totalDone;
-  } catch {}
-}
-
-// ── GOAL DETAIL ──────────────────────────────────────────
-async function openGoal(id) {
-  currentGoal = goals.find(g => String(g.id) === String(id));
-  if (!currentGoal) return;
-  goToMenu('detail');
-  document.getElementById('detail-icon').textContent = currentGoal.icon;
-  document.getElementById('detail-name').textContent = currentGoal.name;
-  document.getElementById('detail-desc').textContent = currentGoal.description;
-  switchDetailTab('tasks');
-  await Promise.all([loadDetailTasks(), loadDetailRoadmap()]);
-}
-
-async function loadDetailTasks() {
-  try {
-    currentTasks = await api(`/api/goals/${currentGoal.id}/tasks`);
-    renderDetailTasks();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-function renderDetailTasks() {
-  const list = document.getElementById('detail-tasks-list');
-  if (!currentTasks.length) {
-    list.innerHTML = '<div class="empty-state">Task yo\'q. AI yoki qo\'lda qo\'shing.</div>';
-  } else {
-    list.innerHTML = currentTasks.map(t => `
-      <div class="task-item-d">
-        <input type="checkbox" class="task-cb" ${t.done ? 'checked' : ''} onchange="toggleTask('${t.id}', this.checked)">
-        <span class="task-text-d${t.done ? ' done' : ''}">${esc(t.text)}</span>
-        <span class="task-day-d">${esc(t.day_label)}</span>${t.due ? `<span class="task-day-d" style="${dueStyle(t)}">📅 ${esc(t.due)}</span>` : ''}<button class="task-del" style="color:var(--sky)" onclick="editTask('${t.id}')">✎</button>
-        <button class="task-del" onclick="deleteTask('${t.id}')">×</button>
-      </div>
-    `).join('');
-  }
-  updateDetailProgress();
-}
-
-function updateDetailProgress() {
-  const done = currentTasks.filter(t => t.done).length;
-  const total = currentTasks.length;
-  const pct = total ? Math.round(done / total * 100) : 0;
-  // desktop
-  document.getElementById('detail-pct').textContent = pct + '%';
-  document.getElementById('detail-task-count').textContent = done + ' / ' + total + ' task';
-  document.getElementById('detail-prog-fill').style.width = pct + '%';
-  // mobile
-  document.getElementById('detail-pct-m').textContent = pct + '%';
-  document.getElementById('detail-task-count-m').textContent = done + ' / ' + total;
-  document.getElementById('detail-prog-fill-m').style.width = pct + '%';
-}
-
-async function toggleTask(id, done) {
-  try {
-    await api(`/api/tasks/${id}`, 'PATCH', { done });
-    const t = currentTasks.find(x => String(x.id) === String(id));
-    if (t) t.done = done;
-    if (done && currentTasks.length && currentTasks.every(x => x.done)) confetti();
-    loadStats();
-    renderDetailTasks();
-    loadSidebarTasks();
-    loadMobileTasks();
-    toast('Saqlandi ✓', 'success');
-  } catch (e) { toast('❌ ' + e.message, 'error'); }
-}
-
-async function deleteTask(id) {
-  try {
-    await api(`/api/tasks/${id}`, 'DELETE');
-    currentTasks = currentTasks.filter(t => String(t.id) !== String(id));
-    renderDetailTasks();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-async function addTaskManual() {
-  const inp = document.getElementById('new-task-input');
-  const text = inp.value.trim();
-  if (!text) return;
-  try {
-    const results = await api(`/api/goals/${currentGoal.id}/tasks`, 'POST', { text, day_label: '', due: document.getElementById('new-task-due').value });
-    currentTasks.push(...results);
-    inp.value = ''; document.getElementById('new-task-due').value = '';
-    renderDetailTasks();
-    toast('Task saqlandi ✓', 'success');
-  } catch (e) { toast('❌ ' + e.message, 'error'); }
-}
-
-async function aiGenTasks() {
-  const btn = document.getElementById('ai-tasks-btn');
-  btn.classList.add('loading'); btn.textContent = '⏳ ...';
-  try {
-    const tasks = await api('/api/ai/tasks', 'POST', { goal: currentGoal.name, description: currentGoal.description });
-    const results = await api(`/api/goals/${currentGoal.id}/tasks`, 'POST', { tasks });
-    currentTasks.push(...results);
-    renderDetailTasks();
-    toast('AI tasklar yaratildi!', 'success');
-  } catch (e) { toast('Xatolik: ' + e.message, 'error'); }
-  btn.classList.remove('loading'); btn.innerHTML = '✦ AI bilan';
-}
-
-async function loadDetailRoadmap() {
-  try {
-    currentRoadmap = await api(`/api/goals/${currentGoal.id}/roadmap`);
-    renderDetailRoadmap();
-  } catch {}
-}
-
-function renderDetailRoadmap() {
-  const list = document.getElementById('detail-roadmap-list');
-  const sideD = document.getElementById('detail-road-progress');
-  const sideM = document.getElementById('detail-road-progress-m');
-  if (!currentRoadmap.length) {
-    list.innerHTML = '<div class="empty-state">Xarita yo\'q. AI bilan yarating.</div>';
-    if (sideD) sideD.textContent = 'Xarita yo\'q';
-    if (sideM) sideM.textContent = 'Xarita yo\'q';
-    return;
-  }
-  list.innerHTML = currentRoadmap.map((s, i) => `
-    <div class="roadmap-step">
-      <div class="step-track">
-        <div class="step-dot${s.done ? ' done' : ''}" onclick="toggleRoadStep('${s.id}',${s.done ? 0 : 1})"></div>
-        ${i < currentRoadmap.length - 1 ? '<div class="step-connector"></div>' : ''}
-      </div>
-      <div class="step-body">
-        <div class="step-title">${esc(s.title)}</div>
-        <div class="step-sub">${esc(s.subtitle)}</div>
-      </div>
-    </div>
-  `).join('');
-  const done = currentRoadmap.filter(s => s.done).length;
-  const info = `<div style="font-size:1.4rem;font-weight:700;color:var(--sky)">${done}/${currentRoadmap.length}</div><div style="font-size:11px;margin-top:3px">bosqich bajarildi</div>`;
-  if (sideD) sideD.innerHTML = info;
-  if (sideM) sideM.innerHTML = info;
-}
-
-async function toggleRoadStep(id, done) {
-  try {
-    await api(`/api/roadmap/${id}`, 'PATCH', { done });
-    const s = currentRoadmap.find(x => String(x.id) === String(id));
-    if (s) s.done = done;
-    renderDetailRoadmap();
-  } catch {}
-}
-
-async function aiGenRoadmap() {
-  const btn = document.getElementById('ai-road-btn');
-  btn.classList.add('loading'); btn.textContent = '⏳ ...';
-  try {
-    const steps = await api('/api/ai/roadmap', 'POST', { goal: currentGoal.name, description: currentGoal.description });
-    currentRoadmap = await api(`/api/goals/${currentGoal.id}/roadmap`, 'POST', { steps });
-    renderDetailRoadmap();
-    toast('Xarita yaratildi!', 'success');
-  } catch (e) { toast('Xatolik: ' + e.message, 'error'); }
-  btn.classList.remove('loading'); btn.innerHTML = '✦ AI bilan';
-}
-
-function switchDetailTab(tab) {
-  activeDetailTab = tab;
-  document.querySelectorAll('.tab').forEach((b, i) =>
-    b.classList.toggle('active', [tab === 'tasks', tab === 'roadmap'][i]));
-  document.getElementById('detail-tasks-tab').style.display = tab === 'tasks' ? 'block' : 'none';
-  document.getElementById('detail-roadmap-tab').style.display = tab === 'roadmap' ? 'block' : 'none';
-}
-
-// ── SIDEBAR TASKS (desktop) ──────────────────────────────
-async function loadSidebarTasks() {
-  const gid = document.getElementById('sidebar-goal-select').value;
-  const list = document.getElementById('sidebar-tasks-list');
-  const stats = document.getElementById('sidebar-stats');
-  if (!gid) { list.innerHTML = '<div class="sidebar-empty">Maqsad tanlang</div>'; stats.style.display = 'none'; return; }
-  try {
-    const tasks = await api(`/api/goals/${gid}/tasks`);
-    if (!tasks.length) { list.innerHTML = '<div class="sidebar-empty">Task yo\'q</div>'; stats.style.display = 'none'; return; }
-    list.innerHTML = tasks.map(t => `
-      <div class="task-item-side">
-        <input type="checkbox" class="task-cb" ${t.done ? 'checked' : ''} onchange="sidebarToggle('${t.id}','${gid}',this.checked)">
-        <div class="task-content">
-          <div class="task-text-s${t.done ? ' done' : ''}">${esc(t.text)}</div>
-          ${t.day_label ? `<div class="task-day-s">${esc(t.day_label)}</div>` : ''}
-        </div>
-      </div>
-    `).join('');
-    const done = tasks.filter(t => t.done).length;
-    const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
-    stats.style.display = 'block';
-    document.getElementById('stat-pct').textContent = pct + '%';
-    document.getElementById('stat-fill').style.width = pct + '%';
-  } catch { list.innerHTML = '<div class="sidebar-empty">Xatolik</div>'; }
-}
-
-async function sidebarToggle(tid, gid, done) {
-  try { await api(`/api/tasks/${tid}`, 'PATCH', { done }); loadStats(); loadSidebarTasks(); } catch (e) { toast('❌ ' + e.message, 'error'); }
-}
-
-// ── MOBILE TASKS (home page) ─────────────────────────────
-async function loadMobileTasks() {
-  const gid = document.getElementById('mobile-goal-select').value;
-  const list = document.getElementById('mobile-tasks-list');
-  const stats = document.getElementById('mobile-stats');
-  if (!gid) { list.innerHTML = '<div class="sidebar-empty">Maqsad tanlang</div>'; stats.style.display = 'none'; return; }
-  try {
-    const tasks = await api(`/api/goals/${gid}/tasks`);
-    if (!tasks.length) { list.innerHTML = '<div class="sidebar-empty">Task yo\'q</div>'; stats.style.display = 'none'; return; }
-    list.innerHTML = tasks.map(t => `
-      <div class="task-item-side">
-        <input type="checkbox" class="task-cb" ${t.done ? 'checked' : ''} onchange="mobileTaskToggle('${t.id}','${gid}',this.checked)">
-        <div class="task-content">
-          <div class="task-text-s${t.done ? ' done' : ''}">${esc(t.text)}</div>
-          ${t.day_label ? `<div class="task-day-s">${esc(t.day_label)}</div>` : ''}
-        </div>
-      </div>
-    `).join('');
-    const done = tasks.filter(t => t.done).length;
-    const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
-    stats.style.display = 'block';
-    document.getElementById('mobile-stat-pct').textContent = pct + '%';
-    document.getElementById('mobile-stat-fill').style.width = pct + '%';
-  } catch { list.innerHTML = '<div class="sidebar-empty">Xatolik</div>'; }
-}
-
-async function mobileTaskToggle(tid, gid, done) {
-  try { await api(`/api/tasks/${tid}`, 'PATCH', { done }); loadStats(); loadMobileTasks(); } catch (e) { toast('❌ ' + e.message, 'error'); }
-}
-
-// ── GOAL MODAL ───────────────────────────────────────────
-let gmMode = 'add';
-function openGoalModal(id = null) {
-  gmMode = id ? 'edit' : 'add';
-  editingGoalId = id;
-  document.getElementById('goal-modal-title').textContent = id ? 'Maqsadni tahrirlash' : 'Yangi maqsad';
-  if (id) {
-    const g = goals.find(x => String(x.id) === String(id));
-    document.getElementById('gm-name').value = g.name;
-    document.getElementById('gm-desc').value = g.description;
-    selEmoji = g.icon; selColor = g.color;
-  } else {
-    document.getElementById('gm-name').value = '';
-    document.getElementById('gm-desc').value = '';
-    selEmoji = '🎯'; selColor = '#38bdf8';
-  }
-  buildEmojiGrid(); buildColorRow();
-  document.getElementById('goal-modal').classList.add('open');
-  setTimeout(() => document.getElementById('gm-name').focus(), 100);
-}
-function closeGoalModal() { document.getElementById('goal-modal').classList.remove('open'); }
-function buildEmojiGrid() {
-  document.getElementById('gm-emoji-grid').innerHTML =
-    EMOJIS.map(e => `<div class="emoji-opt${e === selEmoji ? ' sel' : ''}" onclick="pickEmoji('${e}')">${e}</div>`).join('');
-}
-function buildColorRow() {
-  document.getElementById('gm-color-row').innerHTML =
-    COLORS.map(c => `<div class="color-opt${c === selColor ? ' sel' : ''}" style="background:${c}" onclick="pickColor('${c}')"></div>`).join('');
-}
-function pickEmoji(e) { selEmoji = e; buildEmojiGrid(); }
-function pickColor(c) { selColor = c; buildColorRow(); }
-
-async function saveGoal() {
-  const name = document.getElementById('gm-name').value.trim();
-  if (!name) { toast('Nom kiriting', 'error'); return; }
-  const body = { name, description: document.getElementById('gm-desc').value.trim(), icon: selEmoji, color: selColor };
-  try {
-    if (gmMode === 'edit') {
-      const g = await api(`/api/goals/${editingGoalId}`, 'PUT', body);
-      const idx = goals.findIndex(x => x.id === g.id);
-      if (idx >= 0) goals[idx] = g;
-    } else {
-      const g = await api('/api/goals', 'POST', body);
-      goals.push(g);
-      updateHubStats();
+    if (useMongoose) {
+      if (await User.findOne({ username: key })) return res.status(400).json({ error: 'Bu username band' });
+      const user = await User.create({ username: key, password: bcrypt.hashSync(password, 10) });
+      const token = jwt.sign({ id: user._id.toString(), username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+      return res.json({ token, username: user.username });
     }
-    closeGoalModal();
-    updateSidebarSelect();
-    renderGoalsGrid();
-    toast('Saqlandi!', 'success');
-  } catch (e) { toast('❌ Saqlanmadi: ' + e.message, 'error'); }
-}
+    const db = readDB();
+    if (db.users.find(u => u.username === key)) return res.status(400).json({ error: 'Bu username band' });
+    const user = { id: nextId(db.users), username: key, password: bcrypt.hashSync(password, 10), created_at: new Date().toISOString() };
+    db.users.push(user); writeDB(db);
+    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, username: user.username });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
-async function deleteGoal(id) {
-  if (!confirm("Bu maqsadni o'chirasizmi?")) return;
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username va password kerak' });
+  const key = username.toLowerCase();
   try {
-    await api(`/api/goals/${id}`, 'DELETE');
-    goals = goals.filter(g => String(g.id) !== String(id));
-    updateSidebarSelect();
-    updateHubStats();
-    renderGoalsGrid();
-    toast("O'chirildi");
-  } catch (e) { toast(e.message, 'error'); }
+    if (useMongoose) {
+      const user = await User.findOne({ username: key });
+      if (!user || !bcrypt.compareSync(password, user.password))
+        return res.status(401).json({ error: "Username yoki password noto'g'ri" });
+      const token = jwt.sign({ id: user._id.toString(), username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+      return res.json({ token, username: user.username });
+    }
+    const db   = readDB();
+    const user = db.users.find(u => u.username === key);
+    if (!user || !bcrypt.compareSync(password, user.password))
+      return res.status(401).json({ error: "Username yoki password noto'g'ri" });
+    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, username: user.username });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GOALS ────────────────────────────────────────────────
+app.get('/api/goals', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goals = await Goal.find({ user_id: req.user.id }).sort({ order_idx: 1, _id: 1 });
+      return res.json(goals.map(toObj));
+    }
+    const db = readDB();
+    res.json(db.goals.filter(g => g.user_id === req.user.id).sort((a, b) => a.order_idx - b.order_idx));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/goals', auth, async (req, res) => {
+  const { name, description, icon, color } = req.body;
+  if (!name) return res.status(400).json({ error: 'Nom kerak' });
+  try {
+    if (useMongoose) {
+      const count = await Goal.countDocuments({ user_id: req.user.id });
+      const goal  = await Goal.create({ user_id: req.user.id, name, description: description || '', icon: icon || '🎯', color: color || '#38bdf8', order_idx: count });
+      return res.json(toObj(goal));
+    }
+    const db    = readDB();
+    const count = db.goals.filter(g => g.user_id === req.user.id).length;
+    const goal  = { id: nextId(db.goals), user_id: req.user.id, name, description: description || '', icon: icon || '🎯', color: color || '#38bdf8', order_idx: count, created_at: new Date().toISOString() };
+    db.goals.push(goal); writeDB(db);
+    res.json(goal);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/goals/:id', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOneAndUpdate(
+        { _id: req.params.id, user_id: req.user.id },
+        { $set: { name: req.body.name, description: req.body.description, icon: req.body.icon, color: req.body.color } },
+        { new: true }
+      );
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      return res.json(toObj(goal));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    Object.assign(g, { name: req.body.name, description: req.body.description, icon: req.body.icon, color: req.body.color });
+    writeDB(db); res.json(g);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/goals/:id', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOneAndDelete({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      await Task.deleteMany({ goal_id: goal._id });
+      await RoadmapStep.deleteMany({ goal_id: goal._id });
+      return res.json({ ok: true });
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const idx = db.goals.findIndex(x => x.id === gid && x.user_id === req.user.id);
+    if (idx < 0) return res.status(404).json({ error: 'Topilmadi' });
+    db.goals.splice(idx, 1);
+    db.tasks         = db.tasks.filter(t => t.goal_id !== gid);
+    db.roadmap_steps = db.roadmap_steps.filter(s => s.goal_id !== gid);
+    writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── TASKS ────────────────────────────────────────────────
+app.get('/api/goals/:id/tasks', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      const tasks = await Task.find({ goal_id: goal._id }).sort({ _id: 1 });
+      return res.json(tasks.map(toObj));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    res.json(db.tasks.filter(t => t.goal_id === gid).sort((a, b) => a.id - b.id));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/goals/:id/tasks', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal  = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      const items   = Array.isArray(req.body.tasks) ? req.body.tasks : [req.body];
+      const docs    = items.map(t => ({ goal_id: goal._id, user_id: req.user.id, text: t.text || '', day_label: t.day_label || t.day || '', due: t.due || '', done: false }));
+      const created = await Task.insertMany(docs);
+      return res.json(created.map(toObj));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    const items   = Array.isArray(req.body.tasks) ? req.body.tasks : [req.body];
+    const created = items.map(t => {
+      const task = { id: nextId(db.tasks), goal_id: gid, user_id: req.user.id, text: t.text || '', day_label: t.day_label || t.day || '', due: t.due || '', done: false, created_at: new Date().toISOString() };
+      db.tasks.push(task); return task;
+    });
+    writeDB(db); res.json(created);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/tasks/:id', auth, async (req, res) => {
+  try {
+    const b = req.body, set = {};
+    if (b.done !== undefined) { set.done = b.done === true || b.done === 'true' || b.done === 1; set.done_at = set.done ? new Date().toISOString() : null; }
+    if (typeof b.text === 'string' && b.text.trim()) set.text = b.text.trim().slice(0, 500);
+    if (typeof b.due === 'string') set.due = b.due.slice(0, 10);
+    if (useMongoose) {
+      const t = await Task.findOneAndUpdate({ _id: req.params.id, user_id: req.user.id }, { $set: set });
+      if (!t) return res.status(404).json({ error: 'Topilmadi' });
+      return res.json({ ok: true });
+    }
+    const db = readDB(), t = db.tasks.find(x => x.id === Number(req.params.id) && x.user_id === req.user.id);
+    if (!t) return res.status(404).json({ error: 'Topilmadi' });
+    Object.assign(t, set); writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/stats', auth, async (req, res) => {
+  try {
+    const all = useMongoose ? (await Task.find({ user_id: req.user.id })).map(toObj) : readDB().tasks.filter(t => t.user_id === req.user.id);
+    const days = {}, key = d => d.toISOString().slice(0, 10);
+    all.forEach(t => { if (t.done && t.done_at) { const k = key(new Date(t.done_at)); days[k] = (days[k] || 0) + 1; } });
+    let streak = 0; const d = new Date();
+    if (!days[key(d)]) d.setDate(d.getDate() - 1);
+    while (days[key(d)]) { streak++; d.setDate(d.getDate() - 1); }
+    const week = [...Array(7)].map((_, i) => { const x = new Date(); x.setDate(x.getDate() - 6 + i); return { date: key(x), n: days[key(x)] || 0 }; });
+    res.json({ streak, week });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/tasks/:id', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const task = await Task.findOneAndDelete({ _id: req.params.id, user_id: req.user.id });
+      if (!task) return res.status(404).json({ error: 'Topilmadi' });
+      return res.json({ ok: true });
+    }
+    const db  = readDB();
+    const tid = Number(req.params.id);
+    const idx = db.tasks.findIndex(x => x.id === tid && x.user_id === req.user.id);
+    if (idx < 0) return res.status(404).json({ error: 'Topilmadi' });
+    db.tasks.splice(idx, 1); writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── ROADMAP ──────────────────────────────────────────────
+app.get('/api/goals/:id/roadmap', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      const steps = await RoadmapStep.find({ goal_id: goal._id }).sort({ order_idx: 1, _id: 1 });
+      return res.json(steps.map(toObj));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    res.json(db.roadmap_steps.filter(s => s.goal_id === gid).sort((a, b) => a.order_idx - b.order_idx));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/goals/:id/roadmap', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      await RoadmapStep.deleteMany({ goal_id: goal._id });
+      const steps   = Array.isArray(req.body.steps) ? req.body.steps : [];
+      const docs    = steps.map((s, i) => ({ goal_id: goal._id, title: s.title || '', subtitle: s.subtitle || s.sub || '', done: !!s.done, order_idx: i }));
+      const created = await RoadmapStep.insertMany(docs);
+      return res.json(created.map(toObj));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    db.roadmap_steps = db.roadmap_steps.filter(s => s.goal_id !== gid);
+    const steps = (req.body.steps || []).map((s, i) => {
+      const step = { id: nextId(db.roadmap_steps), goal_id: gid, title: s.title || '', subtitle: s.subtitle || s.sub || '', done: !!s.done, order_idx: i };
+      db.roadmap_steps.push(step); return step;
+    });
+    writeDB(db); res.json(steps);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/roadmap/:id', auth, async (req, res) => {
+  try {
+    const doneVal = req.body.done === true || req.body.done === 1 || req.body.done === '1';
+    if (useMongoose) {
+      const step = await RoadmapStep.findById(req.params.id);
+      if (!step) return res.status(404).json({ error: 'Topilmadi' });
+      const goal = await Goal.findOne({ _id: step.goal_id, user_id: req.user.id });
+      if (!goal) return res.status(403).json({ error: "Ruxsat yo'q" });
+      step.done = doneVal; await step.save();
+      return res.json({ ok: true });
+    }
+    const db  = readDB();
+    const sid = Number(req.params.id);
+    const s   = db.roadmap_steps.find(x => x.id === sid);
+    if (!s) return res.status(404).json({ error: 'Topilmadi' });
+    const g = db.goals.find(x => x.id === s.goal_id && x.user_id === req.user.id);
+    if (!g) return res.status(403).json({ error: "Ruxsat yo'q" });
+    s.done = doneVal; writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── AI ───────────────────────────────────────────────────
+app.post('/api/ai/tasks', auth, async (req, res) => {
+  const { goal, description } = req.body;
+  if (!goal) return res.status(400).json({ error: 'goal kerak' });
+  try { res.json(await generateAi('tasks', goal, description)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ai/roadmap', auth, async (req, res) => {
+  const { goal, description } = req.body;
+  if (!goal) return res.status(400).json({ error: 'goal kerak' });
+  try { res.json(await generateAi('roadmap', goal, description)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── HEALTH & FALLBACK ────────────────────────────────────
+app.get('/api/health', (_req, res) => {
+  const mongoose = useMongoose ? require('mongoose') : null;
+  res.json({ ok: true, db: useMongoose ? (mongoose?.connection?.readyState === 1 ? 'mongodb' : 'mongodb-disconnected') : 'json-file' });
+});
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API topilmadi' }));
+app.get('*', (_, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'), err => {
+    if (err) res.status(404).send('index.html topilmadi');
+  });
+});
+
+// ── START ────────────────────────────────────────────────
+const DEFAULT_PORT = Number(process.env.PORT) || 5500;
+
+function startServer(port, attempt = 1) {
+  const server = app.listen(port, () => {
+    console.log(`✅ GoalApp running on port ${port} [DB: ${useMongoose ? 'MongoDB' : 'data.json'}]`);
+  });
+  server.on('error', err => {
+    if (err.code === 'EADDRINUSE' && attempt < 10) {
+      console.warn(`Port ${port} band. ${port + 1} sinab ko'rilmoqda...`);
+      startServer(port + 1, attempt + 1);
+    } else { console.error('Server xatosi:', err); process.exit(1); }
+  });
 }
 
-// Modal backdrop close
-document.getElementById('goal-modal').addEventListener('click', function (e) {
-  if (e.target === this) closeGoalModal();
-});
+async function main() {
+  if (MONGODB_URI) {
+    try {
+      await setupMongoose();
+    } catch (err) {
+      console.warn(`⚠️  MongoDB ulanmadi (${err.message}). data.json ishlatilmoqda.`);
+      useMongoose = false;
+    }
+  } else {
+    console.log('ℹ️  MONGODB_URI topilmadi. data.json ishlatilmoqda.');
+  }
+  startServer(DEFAULT_PORT);
+}
 
-// ── INIT ─────────────────────────────────────────────────
-if (token && currentUser) showApp();
-else document.getElementById('auth-screen').style.display = 'flex';
-
-document.getElementById('auth-password').addEventListener('keydown', e => {
-  if (e.key === 'Enter') submitAuth();
-});
-</script>
-</body>
-</html>
+main();
