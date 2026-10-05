@@ -1,4 +1,4 @@
-const CACHE = 'goalmap-v1';
+const CACHE = 'goalmap-v3';
 const STATIC = ['/'];
 
 self.addEventListener('install', e => {
