@@ -1,0 +1,464 @@
+require('dotenv').config();
+const express = require('express');
+const jwt     = require('jsonwebtoken');
+const bcrypt  = require('bcryptjs');
+const path    = require('path');
+const cors    = require('cors');
+const fs      = require('fs');
+
+const app        = express();
+const JWT_SECRET = process.env.JWT_SECRET || 'goalapp_secret_2025';
+const DB_PATH    = path.resolve(__dirname, process.env.DB_PATH || 'data.json');
+const PUBLIC_DIR = path.resolve(__dirname);
+const MONGODB_URI = process.env.MONGODB_URI || '';
+
+// ── DB ADAPTER ───────────────────────────────────────────
+let useMongoose = false;
+let User, Goal, Task, RoadmapStep;
+
+// ---- JSON fallback ----
+function readDB() {
+  try {
+    const raw = fs.readFileSync(DB_PATH, 'utf8');
+    const db  = JSON.parse(raw);
+    if (!db.users)         db.users         = [];
+    if (!db.goals)         db.goals         = [];
+    if (!db.tasks)         db.tasks         = [];
+    if (!db.roadmap_steps) db.roadmap_steps = [];
+    return db;
+  } catch { return { users: [], goals: [], tasks: [], roadmap_steps: [] }; }
+}
+function writeDB(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8'); }
+function nextId(arr) { return arr.length ? Math.max(...arr.map(x => Number(x.id) || 0)) + 1 : 1; }
+
+// ---- Mongoose setup ----
+async function setupMongoose() {
+  const mongoose = require('mongoose');
+
+  const UserSchema = new mongoose.Schema({
+    username:   { type: String, required: true, unique: true },
+    password:   { type: String, required: true },
+    created_at: { type: Date, default: Date.now },
+  });
+  const GoalSchema = new mongoose.Schema({
+    user_id:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    name:        { type: String, required: true },
+    description: { type: String, default: '' },
+    icon:        { type: String, default: '🎯' },
+    color:       { type: String, default: '#38bdf8' },
+    order_idx:   { type: Number, default: 0 },
+    created_at:  { type: Date, default: Date.now },
+  });
+  const TaskSchema = new mongoose.Schema({
+    goal_id:    { type: mongoose.Schema.Types.ObjectId, ref: 'Goal', required: true },
+    user_id:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    text:       { type: String, default: '' },
+    day_label:  { type: String, default: '' },
+    done:       { type: Boolean, default: false },
+    created_at: { type: Date, default: Date.now },
+  });
+  const RoadmapStepSchema = new mongoose.Schema({
+    goal_id:   { type: mongoose.Schema.Types.ObjectId, ref: 'Goal', required: true },
+    title:     { type: String, default: '' },
+    subtitle:  { type: String, default: '' },
+    done:      { type: Boolean, default: false },
+    order_idx: { type: Number, default: 0 },
+  });
+
+  User        = mongoose.model('User',        UserSchema);
+  Goal        = mongoose.model('Goal',        GoalSchema);
+  Task        = mongoose.model('Task',        TaskSchema);
+  RoadmapStep = mongoose.model('RoadmapStep', RoadmapStepSchema);
+
+  await mongoose.connect(MONGODB_URI);
+  console.log('✅ MongoDB connected');
+  useMongoose = true;
+}
+
+// Convert MongoDB doc → plain object with .id string
+function toObj(doc) {
+  if (!doc) return null;
+  const o = doc.toObject ? doc.toObject() : { ...doc };
+  o.id = o._id.toString();
+  if (o.user_id) o.user_id = o.user_id.toString();
+  if (o.goal_id) o.goal_id = o.goal_id.toString();
+  delete o._id; delete o.__v;
+  return o;
+}
+
+// ── AI CONFIG ────────────────────────────────────────────
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_MODEL   = process.env.OPENROUTER_MODEL   || 'openai/gpt-4o-mini';
+const OLLAMA_URL         = process.env.OLLAMA_URL         || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL       = process.env.OLLAMA_MODEL       || 'llama3.2:1b';
+
+async function callOpenRouter(prompt) {
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENROUTER_API_KEY}` },
+    body: JSON.stringify({ model: OPENROUTER_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.7, max_tokens: 600 }),
+  });
+  if (!res.ok) throw new Error(`OpenRouter error: ${res.status}`);
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content || '';
+}
+async function callOllama(prompt) {
+  const baseUrl = OLLAMA_URL.replace(/\/+$/g, '');
+  const res = await fetch(`${baseUrl}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: OLLAMA_MODEL, prompt, stream: false, options: { temperature: 0.7, num_predict: 600 } }),
+  });
+  if (!res.ok) throw new Error(`Ollama error: ${res.status}`);
+  const data = await res.json();
+  return data?.response || '';
+}
+function buildAiPrompt(type, goal, desc) {
+  if (type === 'tasks')
+    return `Quyidagi maqsad uchun JSON formatda kunlik tasklar yarat:\nMaqsad: ${goal}\n${desc ? `Tavsif: ${desc}\n` : ''}Natija (faqat JSON massiv):\n[\n  { "text": "task matni", "day_label": "Kun 1" }\n]`;
+  return `Quyidagi maqsad uchun JSON formatda roadmap yarat:\nMaqsad: ${goal}\n${desc ? `Tavsif: ${desc}\n` : ''}Natija (faqat JSON massiv):\n[\n  { "title": "sarlavha", "subtitle": "tavsif" }\n]`;
+}
+function extractJson(text) {
+  const clean = text.replace(/```json|```/g, '').trim();
+  const m = clean.match(/\[[\s\S]*\]/);
+  if (!m) throw new Error("AI noto'g'ri JSON qaytardi");
+  return JSON.parse(m[0]);
+}
+function genLocalTasks(goal, desc) {
+  const verbs = ['Boshlash','Reja tuzish','Amaliyot','Tekshirish','Moslash','Yakunlash'];
+  return verbs.map((v, i) => ({ text: `${v}: ${goal}${desc ? ' - ' + desc : ''}`, day_label: `Kun ${i + 1}` }));
+}
+function genLocalRoadmap(goal, desc) {
+  const s = ['Maqsadni aniqlash','Resurslar','Boshlash','Nazorat','Moslashish','Baholash','Yakunlash'];
+  return s.map((t, i) => ({ title: `${i + 1}. ${t}`, subtitle: `${goal}${desc ? ' - ' + desc : ''}` }));
+}
+async function generateAi(type, goal, desc) {
+  const prompt = buildAiPrompt(type, goal, desc);
+  if (OPENROUTER_API_KEY) {
+    try { return extractJson(await callOpenRouter(prompt)); } catch (e) { console.warn('OpenRouter:', e.message); }
+  }
+  try { return extractJson(await callOllama(prompt)); } catch (e) { console.warn('Ollama:', e.message); }
+  return type === 'tasks' ? genLocalTasks(goal, desc) : genLocalRoadmap(goal, desc);
+}
+
+// ── MIDDLEWARE ───────────────────────────────────────────
+app.use(cors({ origin: true, methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));
+app.options('*', cors());
+app.use(express.json());
+app.use(express.static(PUBLIC_DIR));
+
+function auth(req, res, next) {
+  const h = req.headers.authorization;
+  if (!h) return res.status(401).json({ error: "Token yo'q" });
+  try { req.user = jwt.verify(h.replace('Bearer ', ''), JWT_SECRET); next(); }
+  catch { res.status(401).json({ error: "Token noto'g'ri" }); }
+}
+
+// ── AUTH ─────────────────────────────────────────────────
+app.post('/api/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username va password kerak' });
+  if (username.length < 3)    return res.status(400).json({ error: 'Username kamida 3 harf' });
+  if (password.length < 6)    return res.status(400).json({ error: 'Password kamida 6 belgi' });
+  const key = username.toLowerCase();
+  try {
+    if (useMongoose) {
+      if (await User.findOne({ username: key })) return res.status(400).json({ error: 'Bu username band' });
+      const user = await User.create({ username: key, password: bcrypt.hashSync(password, 10) });
+      const token = jwt.sign({ id: user._id.toString(), username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+      return res.json({ token, username: user.username });
+    }
+    const db = readDB();
+    if (db.users.find(u => u.username === key)) return res.status(400).json({ error: 'Bu username band' });
+    const user = { id: nextId(db.users), username: key, password: bcrypt.hashSync(password, 10), created_at: new Date().toISOString() };
+    db.users.push(user); writeDB(db);
+    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, username: user.username });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username va password kerak' });
+  const key = username.toLowerCase();
+  try {
+    if (useMongoose) {
+      const user = await User.findOne({ username: key });
+      if (!user || !bcrypt.compareSync(password, user.password))
+        return res.status(401).json({ error: "Username yoki password noto'g'ri" });
+      const token = jwt.sign({ id: user._id.toString(), username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+      return res.json({ token, username: user.username });
+    }
+    const db   = readDB();
+    const user = db.users.find(u => u.username === key);
+    if (!user || !bcrypt.compareSync(password, user.password))
+      return res.status(401).json({ error: "Username yoki password noto'g'ri" });
+    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token, username: user.username });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GOALS ────────────────────────────────────────────────
+app.get('/api/goals', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goals = await Goal.find({ user_id: req.user.id }).sort({ order_idx: 1, _id: 1 });
+      return res.json(goals.map(toObj));
+    }
+    const db = readDB();
+    res.json(db.goals.filter(g => g.user_id === req.user.id).sort((a, b) => a.order_idx - b.order_idx));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/goals', auth, async (req, res) => {
+  const { name, description, icon, color } = req.body;
+  if (!name) return res.status(400).json({ error: 'Nom kerak' });
+  try {
+    if (useMongoose) {
+      const count = await Goal.countDocuments({ user_id: req.user.id });
+      const goal  = await Goal.create({ user_id: req.user.id, name, description: description || '', icon: icon || '🎯', color: color || '#38bdf8', order_idx: count });
+      return res.json(toObj(goal));
+    }
+    const db    = readDB();
+    const count = db.goals.filter(g => g.user_id === req.user.id).length;
+    const goal  = { id: nextId(db.goals), user_id: req.user.id, name, description: description || '', icon: icon || '🎯', color: color || '#38bdf8', order_idx: count, created_at: new Date().toISOString() };
+    db.goals.push(goal); writeDB(db);
+    res.json(goal);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/goals/:id', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOneAndUpdate(
+        { _id: req.params.id, user_id: req.user.id },
+        { $set: { name: req.body.name, description: req.body.description, icon: req.body.icon, color: req.body.color } },
+        { new: true }
+      );
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      return res.json(toObj(goal));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    Object.assign(g, { name: req.body.name, description: req.body.description, icon: req.body.icon, color: req.body.color });
+    writeDB(db); res.json(g);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/goals/:id', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOneAndDelete({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      await Task.deleteMany({ goal_id: goal._id });
+      await RoadmapStep.deleteMany({ goal_id: goal._id });
+      return res.json({ ok: true });
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const idx = db.goals.findIndex(x => x.id === gid && x.user_id === req.user.id);
+    if (idx < 0) return res.status(404).json({ error: 'Topilmadi' });
+    db.goals.splice(idx, 1);
+    db.tasks         = db.tasks.filter(t => t.goal_id !== gid);
+    db.roadmap_steps = db.roadmap_steps.filter(s => s.goal_id !== gid);
+    writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── TASKS ────────────────────────────────────────────────
+app.get('/api/goals/:id/tasks', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      const tasks = await Task.find({ goal_id: goal._id }).sort({ _id: 1 });
+      return res.json(tasks.map(toObj));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    res.json(db.tasks.filter(t => t.goal_id === gid).sort((a, b) => a.id - b.id));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/goals/:id/tasks', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal  = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      const items   = Array.isArray(req.body.tasks) ? req.body.tasks : [req.body];
+      const docs    = items.map(t => ({ goal_id: goal._id, user_id: req.user.id, text: t.text || '', day_label: t.day_label || t.day || '', done: false }));
+      const created = await Task.insertMany(docs);
+      return res.json(created.map(toObj));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    const items   = Array.isArray(req.body.tasks) ? req.body.tasks : [req.body];
+    const created = items.map(t => {
+      const task = { id: nextId(db.tasks), goal_id: gid, user_id: req.user.id, text: t.text || '', day_label: t.day_label || t.day || '', done: false, created_at: new Date().toISOString() };
+      db.tasks.push(task); return task;
+    });
+    writeDB(db); res.json(created);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/tasks/:id', auth, async (req, res) => {
+  try {
+    const doneVal = req.body.done === true || req.body.done === 'true';
+    if (useMongoose) {
+      const task = await Task.findOneAndUpdate(
+        { _id: req.params.id, user_id: req.user.id },
+        { $set: { done: doneVal } },
+        { new: true }
+      );
+      if (!task) return res.status(404).json({ error: 'Topilmadi' });
+      return res.json({ ok: true });
+    }
+    const db  = readDB();
+    const tid = Number(req.params.id);
+    const t   = db.tasks.find(x => x.id === tid && x.user_id === req.user.id);
+    if (!t) return res.status(404).json({ error: 'Topilmadi' });
+    t.done = doneVal;
+    writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/tasks/:id', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const task = await Task.findOneAndDelete({ _id: req.params.id, user_id: req.user.id });
+      if (!task) return res.status(404).json({ error: 'Topilmadi' });
+      return res.json({ ok: true });
+    }
+    const db  = readDB();
+    const tid = Number(req.params.id);
+    const idx = db.tasks.findIndex(x => x.id === tid && x.user_id === req.user.id);
+    if (idx < 0) return res.status(404).json({ error: 'Topilmadi' });
+    db.tasks.splice(idx, 1); writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── ROADMAP ──────────────────────────────────────────────
+app.get('/api/goals/:id/roadmap', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      const steps = await RoadmapStep.find({ goal_id: goal._id }).sort({ order_idx: 1, _id: 1 });
+      return res.json(steps.map(toObj));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    res.json(db.roadmap_steps.filter(s => s.goal_id === gid).sort((a, b) => a.order_idx - b.order_idx));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/goals/:id/roadmap', auth, async (req, res) => {
+  try {
+    if (useMongoose) {
+      const goal = await Goal.findOne({ _id: req.params.id, user_id: req.user.id });
+      if (!goal) return res.status(404).json({ error: 'Topilmadi' });
+      await RoadmapStep.deleteMany({ goal_id: goal._id });
+      const steps   = Array.isArray(req.body.steps) ? req.body.steps : [];
+      const docs    = steps.map((s, i) => ({ goal_id: goal._id, title: s.title || '', subtitle: s.subtitle || s.sub || '', done: !!s.done, order_idx: i }));
+      const created = await RoadmapStep.insertMany(docs);
+      return res.json(created.map(toObj));
+    }
+    const db  = readDB();
+    const gid = Number(req.params.id);
+    const g   = db.goals.find(x => x.id === gid && x.user_id === req.user.id);
+    if (!g) return res.status(404).json({ error: 'Topilmadi' });
+    db.roadmap_steps = db.roadmap_steps.filter(s => s.goal_id !== gid);
+    const steps = (req.body.steps || []).map((s, i) => {
+      const step = { id: nextId(db.roadmap_steps), goal_id: gid, title: s.title || '', subtitle: s.subtitle || s.sub || '', done: !!s.done, order_idx: i };
+      db.roadmap_steps.push(step); return step;
+    });
+    writeDB(db); res.json(steps);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/roadmap/:id', auth, async (req, res) => {
+  try {
+    const doneVal = req.body.done === true || req.body.done === 1 || req.body.done === '1';
+    if (useMongoose) {
+      const step = await RoadmapStep.findById(req.params.id);
+      if (!step) return res.status(404).json({ error: 'Topilmadi' });
+      const goal = await Goal.findOne({ _id: step.goal_id, user_id: req.user.id });
+      if (!goal) return res.status(403).json({ error: "Ruxsat yo'q" });
+      step.done = doneVal; await step.save();
+      return res.json({ ok: true });
+    }
+    const db  = readDB();
+    const sid = Number(req.params.id);
+    const s   = db.roadmap_steps.find(x => x.id === sid);
+    if (!s) return res.status(404).json({ error: 'Topilmadi' });
+    const g = db.goals.find(x => x.id === s.goal_id && x.user_id === req.user.id);
+    if (!g) return res.status(403).json({ error: "Ruxsat yo'q" });
+    s.done = doneVal; writeDB(db); res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── AI ───────────────────────────────────────────────────
+app.post('/api/ai/tasks', auth, async (req, res) => {
+  const { goal, description } = req.body;
+  if (!goal) return res.status(400).json({ error: 'goal kerak' });
+  try { res.json(await generateAi('tasks', goal, description)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ai/roadmap', auth, async (req, res) => {
+  const { goal, description } = req.body;
+  if (!goal) return res.status(400).json({ error: 'goal kerak' });
+  try { res.json(await generateAi('roadmap', goal, description)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── HEALTH & FALLBACK ────────────────────────────────────
+app.get('/api/health', (_req, res) => {
+  const mongoose = useMongoose ? require('mongoose') : null;
+  res.json({ ok: true, db: useMongoose ? (mongoose?.connection?.readyState === 1 ? 'mongodb' : 'mongodb-disconnected') : 'json-file' });
+});
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API topilmadi' }));
+app.get('*', (_, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'), err => {
+    if (err) res.status(404).send('index.html topilmadi');
+  });
+});
+
+// ── START ────────────────────────────────────────────────
+const DEFAULT_PORT = Number(process.env.PORT) || 5500;
+
+function startServer(port, attempt = 1) {
+  const server = app.listen(port, () => {
+    console.log(`✅ GoalApp running on port ${port} [DB: ${useMongoose ? 'MongoDB' : 'data.json'}]`);
+  });
+  server.on('error', err => {
+    if (err.code === 'EADDRINUSE' && attempt < 10) {
+      console.warn(`Port ${port} band. ${port + 1} sinab ko'rilmoqda...`);
+      startServer(port + 1, attempt + 1);
+    } else { console.error('Server xatosi:', err); process.exit(1); }
+  });
+}
+
+async function main() {
+  if (MONGODB_URI) {
+    try {
+      await setupMongoose();
+    } catch (err) {
+      console.warn(`⚠️  MongoDB ulanmadi (${err.message}). data.json ishlatilmoqda.`);
+      useMongoose = false;
+    }
+  } else {
+    console.log('ℹ️  MONGODB_URI topilmadi. data.json ishlatilmoqda.');
+  }
+  startServer(DEFAULT_PORT);
+}
+
+main();

@@ -1,0 +1,309 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "abrorxp",
+      "password": "$2a$10$dhVrB2Vfmy7tLWj/.Xz8QOk3I4IQzMVM1YytOkL9NDZUQhWsPiusy",
+      "created_at": "2026-05-01T13:43:01.226Z"
+    }
+  ],
+  "goals": [
+    {
+      "id": 2,
+      "user_id": 1,
+      "name": "BodyBuilder",
+      "description": "Kuchli bo'lish",
+      "icon": "💪",
+      "color": "#facc15",
+      "order_idx": 1,
+      "created_at": "2026-05-01T14:43:42.633Z"
+    },
+    {
+      "id": 3,
+      "user_id": 1,
+      "name": "Learn English",
+      "description": "men hozir elementary darajasidaman menda speakng yomon shuni to'g'irlash uchun qo'ydim",
+      "icon": "📚",
+      "color": "#f87171",
+      "order_idx": 1,
+      "created_at": "2026-05-01T15:19:25.591Z"
+    }
+  ],
+  "tasks": [
+    {
+      "id": 1,
+      "goal_id": 2,
+      "user_id": 1,
+      "text": "Kun 1: 5x5 barbell squat, 4x8 bench press, 3x12 pull-ups, 20 minut cardio",
+      "day_label": "Kun 1",
+      "done": false,
+      "created_at": "2026-05-01T15:16:33.130Z"
+    },
+    {
+      "id": 2,
+      "goal_id": 2,
+      "user_id": 1,
+      "text": "Kun 2: 4x6 deadlift, 3x10 overhead press, 3x15 dumbbell rows, 15 minut interval sprint",
+      "day_label": "Kun 2",
+      "done": false,
+      "created_at": "2026-05-01T15:16:33.130Z"
+    },
+    {
+      "id": 3,
+      "goal_id": 2,
+      "user_id": 1,
+      "text": "Kun 3: Aktif tiklanish – yengil yugurish 30 daqiqa, cho'zish va mobilitet mashqlari",
+      "day_label": "Kun 3",
+      "done": false,
+      "created_at": "2026-05-01T15:16:33.130Z"
+    },
+    {
+      "id": 4,
+      "goal_id": 2,
+      "user_id": 1,
+      "text": "Kun 4: 4x8 leg press, 3x12 incline dumbbell press, 3x10 lat pulldown, 3x15 ab roller",
+      "day_label": "Kun 4",
+      "done": false,
+      "created_at": "2026-05-01T15:16:33.130Z"
+    },
+    {
+      "id": 5,
+      "goal_id": 2,
+      "user_id": 1,
+      "text": "Kun 5: 5x5 barbell row, 4x8 dips, 3x12 Romanian deadlift, 20 minut HIIT",
+      "day_label": "Kun 5",
+      "done": false,
+      "created_at": "2026-05-01T15:16:33.130Z"
+    },
+    {
+      "id": 6,
+      "goal_id": 2,
+      "user_id": 1,
+      "text": "Kun 6: Aktif tiklanish – suzish yoki velosiped 30 daqiqa, yoga va cho'zish",
+      "day_label": "Kun 6",
+      "done": false,
+      "created_at": "2026-05-01T15:16:33.130Z"
+    },
+    {
+      "id": 7,
+      "goal_id": 2,
+      "user_id": 1,
+      "text": "Kun 7: 4x10 goblet squat, 3x12 dumbbell shoulder press, 3x15 cable fly, 3x20 plank (1 daqiqa)",
+      "day_label": "Kun 7",
+      "done": false,
+      "created_at": "2026-05-01T15:16:33.130Z"
+    },
+    {
+      "id": 8,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Basic greetings and self-introduction practice: repeat aloud common greetings and introduce yourself using simple sentences.",
+      "day_label": "Kun 1",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 9,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Listen to a short beginner dialogue (2‑3 minutes) and repeat each sentence, focusing on pronunciation and intonation.",
+      "day_label": "Kun 2",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 10,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Learn 20 everyday nouns (e.g., food, objects) and describe each one with a simple sentence aloud.",
+      "day_label": "Kun 3",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 11,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Shadowing exercise: play a 1‑minute audio clip and speak simultaneously, trying to match the speaker's rhythm.",
+      "day_label": "Kun 4",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 12,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Record yourself answering three basic questions (name, age, hobby) and compare with a native speaker model.",
+      "day_label": "Kun 5",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 13,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Practice common question patterns (What is...?, Where is...?, How many...?) by forming and speaking 5 questions and answers.",
+      "day_label": "Kun 6",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 14,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Watch a beginner YouTube video (2‑3 min) and retell the main idea in your own words, speaking for at least 30 seconds.",
+      "day_label": "Kun 7",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 15,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Role‑play a simple shop scenario: buyer and seller dialogues, focusing on polite expressions and correct stress.",
+      "day_label": "Kun 8",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 16,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Learn 10 common verbs in present simple and create short spoken sentences for each.",
+      "day_label": "Kun 9",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    },
+    {
+      "id": 17,
+      "goal_id": 3,
+      "user_id": 1,
+      "text": "Join a language exchange app for 10 minutes and practice speaking with a partner using the topics you studied this week.",
+      "day_label": "Kun 10",
+      "done": false,
+      "created_at": "2026-05-01T15:19:48.651Z"
+    }
+  ],
+  "roadmap_steps": [
+    {
+      "id": 8,
+      "goal_id": 2,
+      "title": "Maqsadni aniqlash",
+      "subtitle": "Aniq vazifalar va o'lchovli natijalarni (masalan, 10 kg mushak massasi, 5% yog' miqdorini kamaytirish) belgilash.",
+      "done": false,
+      "order_idx": 0
+    },
+    {
+      "id": 9,
+      "goal_id": 2,
+      "title": "Jismoniy holatni baholash",
+      "subtitle": "Baza testlari (kuch, chidamlilik, moslashuvchanlik) va tana tarkibi tahlili o'tkazish.",
+      "done": false,
+      "order_idx": 1
+    },
+    {
+      "id": 10,
+      "goal_id": 2,
+      "title": "Dastur tuzish",
+      "subtitle": "Kuch, hajm va kardio elementlarini o'z ichiga olgan 12‑haftalik trening rejasini yaratish (haftada 4‑5 kun).",
+      "done": false,
+      "order_idx": 2
+    },
+    {
+      "id": 11,
+      "goal_id": 2,
+      "title": "Ozuqa rejasini ishlab chiqish",
+      "subtitle": "Kalkulyator yordamida kunlik kaloriya, makroelementlar (protein 2 g/kg, yog' 0.8 g/kg, uglevodlar) miqdorini belgilash, oziq-ovqat ro'yxati tuzish.",
+      "done": false,
+      "order_idx": 3
+    },
+    {
+      "id": 12,
+      "goal_id": 2,
+      "title": "Progress monitoring",
+      "subtitle": "Har 2‑haftada vazn, tana a'zolari, kuch ko'rsatkichlari va fotosuratlar orqali natijalarni qayd etish.",
+      "done": false,
+      "order_idx": 4
+    },
+    {
+      "id": 13,
+      "goal_id": 2,
+      "title": "Dasturga moslashish",
+      "subtitle": "Natijalarga qarab og'irlik, hajm, intensivlik yoki ovqatlanish miqdorini o'zgartirish, platlolarni yengish.",
+      "done": false,
+      "order_idx": 5
+    },
+    {
+      "id": 14,
+      "goal_id": 2,
+      "title": "Yordamchi odatlarni shakllantirish",
+      "subtitle": "Uyqu (7‑9 soat), suyuqlik iste'moli (≥3 L), stressni boshqarish va muntazam cho'zish.",
+      "done": false,
+      "order_idx": 6
+    },
+    {
+      "id": 15,
+      "goal_id": 2,
+      "title": "Davomiylik va saqlash",
+      "subtitle": "Maqsadingizga erishgandan so'ng, saqlash fazasini (maintenance) belgilab, dastur va ovqatlanishni barqaror usulda davom ettirish.",
+      "done": false,
+      "order_idx": 7
+    },
+    {
+      "id": 16,
+      "goal_id": 3,
+      "title": "Bosqich 1: Asosiy so'z boyligini kengaytirish",
+      "subtitle": "Har kuni 20 yangi so'zni o'rganish, ularni kontekstda ishlatish va fonetikani mashq qilish.",
+      "done": false,
+      "order_idx": 0
+    },
+    {
+      "id": 17,
+      "goal_id": 3,
+      "title": "Bosqich 2: Fonetik va talaffuz mashqlari",
+      "subtitle": "Har kuni 15 daqiqa audio material (podkast, YouTube) tinglash, so'zlarni takrorlash va o'z ovozingizni yozib tahlil qilish.",
+      "done": false,
+      "order_idx": 1
+    },
+    {
+      "id": 18,
+      "goal_id": 3,
+      "title": "Bosqich 3: Oddiy suhbatlarni amaliyot qilish",
+      "subtitle": "Haftada kamida 3 marta til almashish do'sti yoki onlayn platformada 5‑10 daqiqa suhbatlashish, kundalik mavzularni tanlash.",
+      "done": false,
+      "order_idx": 2
+    },
+    {
+      "id": 19,
+      "goal_id": 3,
+      "title": "Bosqich 4: Grammatika asoslari va gap tuzilishi",
+      "subtitle": "Har hafta bir taqdimotga asoslangan qoidani o'rganish, misollar yozish va qisqa dialoglar yaratish.",
+      "done": false,
+      "order_idx": 3
+    },
+    {
+      "id": 20,
+      "goal_id": 3,
+      "title": "Bosqich 5: Tinglash va tushunish ko'nikmalarini mustahkamlash",
+      "subtitle": "Har kuni 10‑15 daqiqa qisqa videolar yoki hikoyalarni tomosha qilish, asosiy mazmunni yozma ravishda qisqacha bayon etish.",
+      "done": false,
+      "order_idx": 4
+    },
+    {
+      "id": 21,
+      "goal_id": 3,
+      "title": "Bosqich 6: O'zaro baham ko'rish va teskari aloqa olish",
+      "subtitle": "Har ikki haftada o'z yozma va og'zaki ishlaringizni o'qituvchi yoki til hamkoridan tahlil qilish, xatolarni tuzatish.",
+      "done": false,
+      "order_idx": 5
+    },
+    {
+      "id": 22,
+      "goal_id": 3,
+      "title": "Bosqich 7: Real hayotda qo'llash",
+      "subtitle": "Oy oxirida ingliz tilida 30 daqiqalik mavzuli prezentatsiya yoki roll-play tayyorlash, natijani yozma va audio shaklida saqlash.",
+      "done": false,
+      "order_idx": 6
+    }
+  ]
+}
