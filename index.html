@@ -355,6 +355,9 @@ input,textarea,select{font-family:inherit}
       </div>
     </div>
     <div class="topbar-right">
+      <div id="streak-badge" title="Ketma-ket kunlar" style="font-size:13px;color:var(--text2);display:flex;align-items:center;margin-right:10px"></div>
+      <button class="btn-logout" onclick="enableNotif()" title="Eslatmalar">🔔</button>
+      <button class="btn-logout" onclick="exportData()" title="Eksport">⬇</button>
       <div class="user-badge">
         <div class="avatar" id="user-avatar">?</div>
         <span class="name" id="user-name-label" style="font-size:13px;color:var(--text2)">...</span>
@@ -453,6 +456,7 @@ input,textarea,select{font-family:inherit}
             <div id="detail-tasks-list"></div>
             <div class="add-task-row">
               <input class="add-task-input" id="new-task-input" placeholder="Yangi task..." onkeydown="if(event.key==='Enter')addTaskManual()">
+              <input type="date" id="new-task-due" class="add-task-input" style="max-width:140px;flex:none" title="Muddat">
               <button class="btn-small" onclick="addTaskManual()">+</button>
             </div>
           </div>
@@ -594,6 +598,73 @@ function toast(msg, type = '') {
   setTimeout(() => t.classList.remove('show'), 2800);
 }
 
+// ── EXTRAS ───────────────────────────────────────────────
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+const dueStyle = t => (!t.done && t.due < today()) ? 'color:#f87171' : '';
+
+async function loadStats() {
+  try {
+    const s = await api('/api/stats'), mx = Math.max(1, ...s.week.map(w => w.n));
+    document.getElementById('streak-badge').innerHTML = '🔥 ' + s.streak +
+      '<span style="display:inline-flex;align-items:flex-end;gap:2px;height:14px;margin-left:6px">' +
+      s.week.map(w => `<i title="${w.date}: ${w.n}" style="width:4px;height:${3 + w.n / mx * 11}px;background:var(--sky);border-radius:1px"></i>`).join('') + '</span>';
+  } catch {}
+}
+
+async function editTask(id) {
+  const t = currentTasks.find(x => String(x.id) === String(id));
+  if (!t) return;
+  const text = prompt('Task matni:', t.text);
+  if (text === null) return;
+  const due = prompt("Muddat (YYYY-MM-DD), bo'sh = yo'q:", t.due || '');
+  if (due === null) return;
+  try {
+    await api(`/api/tasks/${id}`, 'PATCH', { text, due: due.trim() });
+    t.text = text.trim() || t.text; t.due = due.trim();
+    renderDetailTasks(); toast('Saqlandi ✓', 'success');
+  } catch (e) { toast('❌ ' + e.message, 'error'); }
+}
+
+async function checkDue() {
+  try {
+    const list = [];
+    for (const g of goals) (await api(`/api/goals/${g.id}/tasks`)).forEach(t => { if (!t.done && t.due && t.due <= today()) list.push(t); });
+    if (!list.length) return;
+    toast(`⏰ ${list.length} ta task muddati keldi`, 'error');
+    if ('Notification' in window && Notification.permission === 'granted')
+      navigator.serviceWorker?.ready.then(r => r.showNotification('GoalMap', { body: list.length + ' ta task: ' + list[0].text }));
+  } catch {}
+}
+async function enableNotif() {
+  if (!('Notification' in window)) return toast('Brauzer qo\'llamaydi', 'error');
+  const p = await Notification.requestPermission();
+  toast(p === 'granted' ? 'Eslatmalar yoqildi ✓' : 'Ruxsat berilmadi', p === 'granted' ? 'success' : 'error');
+  if (p === 'granted') checkDue();
+}
+
+async function exportData() {
+  const out = [];
+  for (const g of goals) out.push({ ...g, tasks: await api(`/api/goals/${g.id}/tasks`), roadmap: await api(`/api/goals/${g.id}/roadmap`) });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }));
+  a.download = 'goalmap-export.json'; a.click();
+}
+
+function confetti() {
+  const c = document.createElement('canvas');
+  c.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:999';
+  c.width = innerWidth; c.height = innerHeight; document.body.appendChild(c);
+  const x = c.getContext('2d'), f0 = 0;
+  const p = [...Array(120)].map(() => ({ x: Math.random() * c.width, y: -20, vx: Math.random() * 4 - 2, vy: Math.random() * 4 + 2, s: Math.random() * 6 + 4, c: COLORS[Math.random() * COLORS.length | 0] }));
+  let f = f0;
+  (function t() {
+    x.clearRect(0, 0, c.width, c.height);
+    p.forEach(q => { q.x += q.vx; q.y += q.vy; q.vy += .05; x.fillStyle = q.c; x.fillRect(q.x, q.y, q.s, q.s); });
+    if (++f < 150) requestAnimationFrame(t); else c.remove();
+  })();
+}
+
 // ── AUTH ─────────────────────────────────────────────────
 function setAuthTab(mode) {
   authMode = mode;
@@ -632,6 +703,7 @@ async function showApp() {
   document.getElementById('user-avatar').textContent = (currentUser || '?')[0].toUpperCase();
   await loadGoals();
   goToMenu('main');
+  loadStats(); checkDue();
 }
 
 async function loadGoals() {
@@ -651,7 +723,7 @@ function updateHubStats() {
 
 function updateSidebarSelect() {
   const opts = '<option value="">— Maqsad tanlang —</option>' +
-    goals.map(g => `<option value="${g.id}">${g.icon} ${g.name}</option>`).join('');
+    goals.map(g => `<option value="${g.id}">${esc(g.icon)} ${esc(g.name)}</option>`).join('');
   document.getElementById('sidebar-goal-select').innerHTML = opts;
   document.getElementById('mobile-goal-select').innerHTML = opts;
 }
@@ -681,7 +753,7 @@ function goToMenu(menu) {
   const bc = document.getElementById('breadcrumb');
   if (menu === 'main') bc.innerHTML = '<span class="crumb active">Bosh sahifa</span>';
   else if (menu === 'goals') bc.innerHTML = '<span class="crumb" onclick="goToMenu(\'main\')">Bosh</span><span>›</span><span class="crumb active">Maqsadlar</span>';
-  else if (menu === 'detail') bc.innerHTML = `<span class="crumb" onclick="goToMenu('main')">Bosh</span><span>›</span><span class="crumb" onclick="goToMenu('goals')">Maqsadlar</span><span>›</span><span class="crumb active">${currentGoal?.name || ''}</span>`;
+  else if (menu === 'detail') bc.innerHTML = `<span class="crumb" onclick="goToMenu('main')">Bosh</span><span>›</span><span class="crumb" onclick="goToMenu('goals')">Maqsadlar</span><span>›</span><span class="crumb active">${esc(currentGoal?.name)}</span>`;
 
   if (menu === 'goals') renderGoalsGrid();
   window.scrollTo(0, 0);
@@ -698,11 +770,11 @@ function renderGoalsGrid() {
   grid.innerHTML = goals.map(g => `
     <div class="goal-card" style="--card-accent:${g.color}" onclick="openGoal('${g.id}')">
       <div class="goal-card-top">
-        <div class="goal-icon-wrap" style="background:${g.color}22">${g.icon}</div>
+        <div class="goal-icon-wrap" style="background:${g.color}22">${esc(g.icon)}</div>
         <button class="goal-card-menu" onclick="event.stopPropagation();deleteGoal('${g.id}')">×</button>
       </div>
-      <div class="goal-card-name">${g.name}</div>
-      <div class="goal-card-desc">${g.description || ''}</div>
+      <div class="goal-card-name">${esc(g.name)}</div>
+      <div class="goal-card-desc">${esc(g.description)}</div>
       <div class="goal-progress-bar"><div class="goal-progress-fill" style="background:${g.color};width:0%" id="gp-${g.id}"></div></div>
       <div class="goal-progress-label"><span id="gc-${g.id}">...</span><span id="gpct-${g.id}"></span></div>
     </div>
@@ -756,8 +828,8 @@ function renderDetailTasks() {
     list.innerHTML = currentTasks.map(t => `
       <div class="task-item-d">
         <input type="checkbox" class="task-cb" ${t.done ? 'checked' : ''} onchange="toggleTask('${t.id}', this.checked)">
-        <span class="task-text-d${t.done ? ' done' : ''}">${t.text}</span>
-        <span class="task-day-d">${t.day_label || ''}</span>
+        <span class="task-text-d${t.done ? ' done' : ''}">${esc(t.text)}</span>
+        <span class="task-day-d">${esc(t.day_label)}</span>${t.due ? `<span class="task-day-d" style="${dueStyle(t)}">📅 ${esc(t.due)}</span>` : ''}<button class="task-del" style="color:var(--sky)" onclick="editTask('${t.id}')">✎</button>
         <button class="task-del" onclick="deleteTask('${t.id}')">×</button>
       </div>
     `).join('');
@@ -784,6 +856,8 @@ async function toggleTask(id, done) {
     await api(`/api/tasks/${id}`, 'PATCH', { done });
     const t = currentTasks.find(x => String(x.id) === String(id));
     if (t) t.done = done;
+    if (done && currentTasks.length && currentTasks.every(x => x.done)) confetti();
+    loadStats();
     renderDetailTasks();
     loadSidebarTasks();
     loadMobileTasks();
@@ -804,9 +878,9 @@ async function addTaskManual() {
   const text = inp.value.trim();
   if (!text) return;
   try {
-    const results = await api(`/api/goals/${currentGoal.id}/tasks`, 'POST', { text, day_label: '' });
+    const results = await api(`/api/goals/${currentGoal.id}/tasks`, 'POST', { text, day_label: '', due: document.getElementById('new-task-due').value });
     currentTasks.push(...results);
-    inp.value = '';
+    inp.value = ''; document.getElementById('new-task-due').value = '';
     renderDetailTasks();
     toast('Task saqlandi ✓', 'success');
   } catch (e) { toast('❌ ' + e.message, 'error'); }
@@ -849,8 +923,8 @@ function renderDetailRoadmap() {
         ${i < currentRoadmap.length - 1 ? '<div class="step-connector"></div>' : ''}
       </div>
       <div class="step-body">
-        <div class="step-title">${s.title}</div>
-        <div class="step-sub">${s.subtitle || ''}</div>
+        <div class="step-title">${esc(s.title)}</div>
+        <div class="step-sub">${esc(s.subtitle)}</div>
       </div>
     </div>
   `).join('');
@@ -902,8 +976,8 @@ async function loadSidebarTasks() {
       <div class="task-item-side">
         <input type="checkbox" class="task-cb" ${t.done ? 'checked' : ''} onchange="sidebarToggle('${t.id}','${gid}',this.checked)">
         <div class="task-content">
-          <div class="task-text-s${t.done ? ' done' : ''}">${t.text}</div>
-          ${t.day_label ? `<div class="task-day-s">${t.day_label}</div>` : ''}
+          <div class="task-text-s${t.done ? ' done' : ''}">${esc(t.text)}</div>
+          ${t.day_label ? `<div class="task-day-s">${esc(t.day_label)}</div>` : ''}
         </div>
       </div>
     `).join('');
@@ -916,7 +990,7 @@ async function loadSidebarTasks() {
 }
 
 async function sidebarToggle(tid, gid, done) {
-  try { await api(`/api/tasks/${tid}`, 'PATCH', { done }); loadSidebarTasks(); } catch (e) { toast('❌ ' + e.message, 'error'); }
+  try { await api(`/api/tasks/${tid}`, 'PATCH', { done }); loadStats(); loadSidebarTasks(); } catch (e) { toast('❌ ' + e.message, 'error'); }
 }
 
 // ── MOBILE TASKS (home page) ─────────────────────────────
@@ -932,8 +1006,8 @@ async function loadMobileTasks() {
       <div class="task-item-side">
         <input type="checkbox" class="task-cb" ${t.done ? 'checked' : ''} onchange="mobileTaskToggle('${t.id}','${gid}',this.checked)">
         <div class="task-content">
-          <div class="task-text-s${t.done ? ' done' : ''}">${t.text}</div>
-          ${t.day_label ? `<div class="task-day-s">${t.day_label}</div>` : ''}
+          <div class="task-text-s${t.done ? ' done' : ''}">${esc(t.text)}</div>
+          ${t.day_label ? `<div class="task-day-s">${esc(t.day_label)}</div>` : ''}
         </div>
       </div>
     `).join('');
@@ -946,7 +1020,7 @@ async function loadMobileTasks() {
 }
 
 async function mobileTaskToggle(tid, gid, done) {
-  try { await api(`/api/tasks/${tid}`, 'PATCH', { done }); loadMobileTasks(); } catch (e) { toast('❌ ' + e.message, 'error'); }
+  try { await api(`/api/tasks/${tid}`, 'PATCH', { done }); loadStats(); loadMobileTasks(); } catch (e) { toast('❌ ' + e.message, 'error'); }
 }
 
 // ── GOAL MODAL ───────────────────────────────────────────
